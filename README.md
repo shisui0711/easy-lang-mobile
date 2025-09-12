@@ -85,6 +85,53 @@ The app is designed to work with the EasyLang web application API. Update the `B
 const BASE_URL = 'http://your-api-url.com/api';
 ```
 
+### API Configuration for Development
+
+For mobile development, you'll need to use your machine's IP address instead of `localhost` since `localhost` on mobile refers to the device itself:
+
+- **Android Emulator**: Use `10.0.2.2` as the host
+- **iOS Simulator**: Use `localhost`
+- **Physical Device**: Use your development machine's IP address (e.g., `192.168.1.10`)
+
+Example configuration for Android emulator:
+```typescript
+const BASE_URL = 'http://10.0.2.2:3000/api';
+```
+
+You can also set the API URL using environment variables:
+```bash
+EXPO_PUBLIC_API_URL=http://YOUR_MACHINE_IP:3000/api
+```
+
+Then in your code:
+```typescript
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:3000/api';
+```
+
+### Testing API Connectivity
+
+The app includes built-in API testing utilities. You can run tests to verify connectivity:
+
+```javascript
+import { apiTestUtils } from '@/lib/api-test-utils';
+
+// Run all tests
+const results = await apiTestUtils.runAllTests();
+console.log(results);
+```
+
+### Troubleshooting API Issues
+
+If you encounter API connection issues:
+
+1. **Verify the API server is running** on your development machine
+2. **Check the IP address** you're using matches your machine's IP
+3. **Ensure your firewall** allows connections on the API port (usually 3000)
+4. **Verify authentication** by checking that tokens are being stored and sent correctly
+5. **Check server logs** for authentication errors
+
+For detailed troubleshooting steps, see [API Troubleshooting Guide](docs/api-troubleshooting.md).
+
 ## Key Features Implemented
 
 ### Authentication System

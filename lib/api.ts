@@ -1,9 +1,11 @@
-import axios, { AxiosInstance, AxiosResponse, AxiosError } from 'axios';
-import * as SecureStore from 'expo-secure-store';
 import { ApiResponse } from '@/types';
+import axios, { AxiosError, AxiosInstance, AxiosResponse } from 'axios';
+import * as SecureStore from 'expo-secure-store';
 
 // Configure base URL - replace with your actual API URL
-const BASE_URL = 'http://10.55.112.221:3000/api'; // Change this to your web app's API URL
+// For mobile development, you'll need to use your machine's IP address
+// instead of localhost since localhost on mobile refers to the device itself
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.55.112.221:3000/api'; // Default from original code
 
 // Add retry configuration
 const MAX_RETRY_ATTEMPTS = 3;
@@ -15,7 +17,7 @@ class ApiClient {
   constructor() {
     this.client = axios.create({
       baseURL: BASE_URL,
-      timeout: 10000,
+      timeout: 15000, // Increased timeout for mobile networks
       headers: {
         'Content-Type': 'application/json',
       },
@@ -28,13 +30,17 @@ class ApiClient {
           const token = await SecureStore.getItemAsync('authToken');
           if (token) {
             config.headers.Authorization = `Bearer ${token}`;
-            // Also add token to cookies for compatibility with web backend
-            config.headers.Cookie = `accessToken=${token}`;
+            console.log('Added auth token to request');
+          } else {
+            console.log('No auth token found');
           }
           
           // Add additional headers for mobile app identification
           config.headers['X-Client-Type'] = 'mobile';
           config.headers['X-App-Version'] = '1.0.0';
+          
+          console.log(`Making request to: ${config?.baseURL ?? "/" + config?.url}`);
+          console.log('Request headers:', config.headers);
           
           return config;
         } catch (error) {
@@ -49,9 +55,13 @@ class ApiClient {
 
     // Response interceptor for error handling and retry logic
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        console.log('API Response:', response.status, response.config.url);
+        return response;
+      },
       async (error) => {
         const originalRequest = error.config;
+        console.log('API Error:', error.response?.status, error.response?.data, error.config?.url);
         
         // Handle authentication errors
         if (error.response?.status === 401 || error.response?.status === 403) {
@@ -98,9 +108,9 @@ class ApiClient {
     );
   }
 
-  async get<T>(url: string, params?: any): Promise<ApiResponse<T>> {
+  async get<T>(url: string, config?: { params?: any }): Promise<ApiResponse<T>> {
     try {
-      const response: AxiosResponse<T> = await this.client.get(url, { params });
+      const response: AxiosResponse<T> = await this.client.get(url, config);
       return {
         success: true,
         data: response.data,
@@ -227,8 +237,20 @@ export const testApi = {
   // Test authentication
   testAuth: () => apiClient.get('/test/auth'),
   
+  // Test mobile authentication
+  testMobileAuth: () => apiClient.get('/test/mobile-auth'),
+  
   // Health check
   health: () => apiClient.get('/health'),
+  
+  // Test writing exercises endpoint
+  testWritingExercises: () => apiClient.get('/writing/exercises', {
+    params: {
+      type: 'SENTENCE',
+      level: 'Beginner',
+      pageSize: 5
+    }
+  }),
 };
 
 // Authentication API functions
@@ -252,7 +274,7 @@ export const authApi = {
   updateProfile: (data: any) => apiClient.put('/user/profile', data),
 };
 
-  // Learning module specific API functions with improved error handling
+// Learning module specific API functions with improved error handling
 export const learningApi = {
   // Vocabulary APIs
   getVocabularyReview: () => apiClient.get('/review'),
@@ -262,7 +284,7 @@ export const learningApi = {
   // Writing APIs
   getWritingExercises: (params?: any) => {
     console.log('Fetching writing exercises with params:', params);
-    return apiClient.get('/writing/exercises', params);
+    return apiClient.get('/writing/exercises', { params });
   },
   submitWriting: (exerciseId: string, content: string, writingTime: number) =>
     apiClient.post('/writing/submissions', { exerciseId, content, writingTime }),
@@ -271,7 +293,7 @@ export const learningApi = {
   
   // Reading APIs
   getReadingExercises: (params?: any) => 
-    apiClient.get('/reading/exercises', params),
+    apiClient.get('/reading/exercises', { params }),
   submitReadingAnswers: (exerciseId: string, answers: any, readingTime: number) =>
     apiClient.post('/reading/submissions', { exerciseId, answers, readingTime }),
   getReadingSubmissions: () => 
@@ -279,7 +301,7 @@ export const learningApi = {
   
   // Listening APIs
   getListeningExercises: (params?: any) => 
-    apiClient.get('/listening/exercises', params),
+    apiClient.get('/listening/exercises', { params }),
   submitListeningAnswers: (exerciseId: string, answers: any, transcription?: string, listeningTime?: number) =>
     apiClient.post('/listening/submissions', { exerciseId, answers, transcription, listeningTime }),
   getListeningSubmissions: () => 
@@ -287,7 +309,7 @@ export const learningApi = {
   
   // Speaking APIs
   getSpeakingExercises: (params?: any) => 
-    apiClient.get('/speaking/exercises', params),
+    apiClient.get('/speaking/exercises', { params }),
   submitSpeakingRecording: (exerciseId: string, audioUri: string) =>
     apiClient.post('/speaking/submissions', { exerciseId, audioUri }),
   getSpeakingSubmissions: () => 
@@ -295,7 +317,7 @@ export const learningApi = {
   
   // Grammar APIs (if implemented on backend)
   getGrammarLessons: (params?: any) => 
-    apiClient.get('/grammar/lessons', params),
+    apiClient.get('/grammar/lessons', { params }),
   submitGrammarAnswers: (lessonId: string, answers: any) =>
     apiClient.post('/grammar/submissions', { lessonId, answers }),
   getGrammarSubmissions: () => 
