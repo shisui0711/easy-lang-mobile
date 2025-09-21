@@ -5,23 +5,24 @@ import * as SecureStore from 'expo-secure-store';
 // Configure base URL - replace with your actual API URL
 // For mobile development, you'll need to use your machine's IP address
 // instead of localhost since localhost on mobile refers to the device itself
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.55.112.221:3000/api'; // Default from original code
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.104.107.221:3000/api'; // Default to localhost for development
 
 // Add retry configuration
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_DELAY = 1000; // 1 second
+const CONFIG = {
+    baseURL: BASE_URL,
+      timeout: 15000, // Increased timeout for mobile networks
+      headers: {
+        'Content-Type': 'application/json',
+      },
+  }
 
 class ApiClient {
   private client: AxiosInstance;
 
   constructor() {
-    this.client = axios.create({
-      baseURL: BASE_URL,
-      timeout: 15000, // Increased timeout for mobile networks
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    this.client = axios.create(CONFIG);
 
     // Request interceptor to add auth token
     this.client.interceptors.request.use(
@@ -38,6 +39,11 @@ class ApiClient {
           // Add additional headers for mobile app identification
           config.headers['X-Client-Type'] = 'mobile';
           config.headers['X-App-Version'] = '1.0.0';
+          
+          // Don't override Content-Type for FormData (let browser set it with boundary)
+          if (config.data instanceof FormData) {
+            delete config.headers['Content-Type'];
+          }
           
           console.log(`Making request to: ${config?.baseURL ?? "/" + config?.url}`);
           console.log('Request headers:', config.headers);
@@ -280,6 +286,16 @@ export const learningApi = {
   getVocabularyReview: () => apiClient.get('/review'),
   submitVocabularyRating: (cardId: string, rating: string) => 
     apiClient.post('/review', { cardId, rating }),
+  // Vocabulary management APIs
+  getVocabularyCards: (params?: any) => apiClient.get('/vocabulary', { params }),
+  addVocabularyCard: (data: any) => apiClient.post('/vocabulary', data),
+  updateVocabularyCard: (id: string, data: any) => apiClient.put(`/vocabulary/${id}`, data),
+  deleteVocabularyCard: (id: string) => apiClient.delete(`/vocabulary/${id}`),
+  // Vocabulary practice APIs
+  generatePracticeQuestions: (vocabularyCardId: string, count?: number) => 
+    apiClient.post('/vocabulary/questions', { vocabularyCardId, count }),
+  checkPracticeAnswer: (questionId: string, userAnswer: string, vocabularyCardId: string) => 
+    apiClient.put('/vocabulary/questions', { questionId, userAnswer, vocabularyCardId }),
   
   // Writing APIs
   getWritingExercises: (params?: any) => {
@@ -320,6 +336,66 @@ export const learningApi = {
     apiClient.get('/grammar/lessons', { params }),
   submitGrammarAnswers: (lessonId: string, answers: any) =>
     apiClient.post('/grammar/submissions', { lessonId, answers }),
-  getGrammarSubmissions: () => 
+  getGrammarSubmissions: () =>
     apiClient.get('/grammar/submissions'),
+};
+
+// AI API functions
+export const aiApi = {
+  // STT (Speech-to-Text) APIs
+  transcribeAudio: (formData: FormData) =>
+    apiClient.post('/ai/stt', formData),
+  transcribeBatch: (formData: FormData) =>
+    apiClient.post('/ai/stt/batch', formData),
+  getSTTInfo: (params?: { type?: 'engines' | 'languages' | 'health' }) =>
+    apiClient.get('/ai/stt', { params }),
+  
+  // Translation APIs
+  translateText: (data: {
+    text: string;
+    target_language: string;
+    source_language?: string;
+    engine?: string;
+    model?: string;
+    confidence_threshold?: number;
+  }) => apiClient.post('/ai/translation', data),
+  translateBatch: (data: {
+    texts: string[];
+    target_language: string;
+    source_language?: string;
+    engine?: string;
+  }) => apiClient.post('/ai/translation/batch', data),
+  detectLanguage: (formData: FormData) =>
+    apiClient.post('/ai/translation/detect', formData),
+  quickTranslate: (formData: FormData) =>
+    apiClient.post('/ai/translation/quick', formData),
+  getTranslationInfo: (params?: { type?: 'engines' | 'languages' | 'pairs' }) =>
+    apiClient.get('/ai/translation', { params }),
+  
+  // TTS (Text-to-Speech) APIs
+  generateSpeech: (data: {
+    text: string;
+    language?: string;
+    engine?: string;
+    voice?: string;
+    speed?: number;
+  }) => apiClient.post('/ai/tts', data),
+  quickTTS: (data: {
+    text: string;
+    language?: string;
+    engine?: string;
+  }) =>
+    apiClient.post('/ai/tts/quick', data),
+  getTTSInfo: (params?: { type?: 'voices' | 'engines' }) =>
+    apiClient.get('/ai/tts', { params }),
+  downloadAudio: (audioId: string) =>
+    apiClient.get(`/ai/tts/download/${audioId}`),
+  
+  // Health and Capabilities APIs
+  getAIHealth: () =>
+    apiClient.get('/ai/health'),
+  initializeAIServices: () =>
+    apiClient.post('/ai/health'),
+  getAICapabilities: () =>
+    apiClient.get('/ai/capabilities'),
 };
