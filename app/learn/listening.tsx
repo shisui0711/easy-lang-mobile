@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,13 +11,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import RNPickerSelect from 'react-native-picker-select';
-import * as SecureStore from 'expo-secure-store';
 
 import { Card, CardContent, Button, Input } from '@/components/ui';
-import { aiApi, apiClient, learningApi } from '@/lib/api';
+import { aiApi, learningApi } from '@/lib/api';
 
 interface ListeningExercise {
   id: string;
@@ -51,6 +49,31 @@ interface ListeningSubmission {
   createdAt: string;
 }
 
+interface Question {
+  id: string
+  question: string
+  type: 'multiple_choice' | 'short_answer' | 'fill_blank'
+  options?: string[]
+  correctAnswer: string | string[]
+  explanation?: string
+  points?: number
+}
+
+interface GradingResult {
+  score: number
+  maxScore: number
+  percentage: number
+  feedback: {
+    questionId: string
+    isCorrect: boolean
+    correctAnswer: string | string[]
+    explanation?: string
+    userAnswer: string
+  }[]
+  dictationAccuracy?: number
+  dictationFeedback?: string
+}
+
 export default function ListeningScreen() {
   const [exercises, setExercises] = useState<ListeningExercise[]>([]);
   const [submissions, setSubmissions] = useState<ListeningSubmission[]>([]);
@@ -70,6 +93,11 @@ export default function ListeningScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [startTime, setStartTime] = useState<number | null>(null);
+  // New states for grading functionality
+  const [gradingResult, setGradingResult] = useState<GradingResult | null>(null)
+  const [showResults, setShowResults] = useState(false)
+  // New state for audio loading
+  const [isAudioLoading, setIsAudioLoading] = useState(false)
 
   useEffect(() => {
     fetchExercises();
@@ -119,6 +147,7 @@ export default function ListeningScreen() {
 
   const loadAudioFromScript = async (script: string) => {
     try {
+      setIsAudioLoading(true);
       // Check if script exists
       if (!script) {
         console.warn('No audio script provided');
@@ -159,6 +188,8 @@ export default function ListeningScreen() {
       console.error('Error loading audio from script:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       Alert.alert('Error', `Failed to generate audio from script: ${errorMessage}`);
+    } finally {
+      setIsAudioLoading(false);
     }
   };
 
@@ -220,35 +251,136 @@ export default function ListeningScreen() {
     setAnswers(prev => ({ ...prev, [questionId]: answer }));
   };
 
+  // Automatic grading function
+  const gradeAnswers = (exercise: ListeningExercise, userAnswers: Record<string, string>, userTranscription: string): GradingResult => {
+    const questions = exercise.questions || []
+    let totalScore = 0
+    let maxScore = 0
+    const feedback = []
+
+    // Grade questions
+    for (const [index, question] of questions.entries()) {
+      const questionId = `q${index}`
+      const userAnswer = userAnswers[questionId] || ''
+      const correctAnswer = question.correctAnswer
+      const points = question.points || 1
+      maxScore += points
+
+      let isCorrect = false
+      let normalizedCorrectAnswer = ''
+
+      switch (question.type) {
+        case 'multiple_choice':
+          isCorrect = userAnswer === (Array.isArray(correctAnswer) ? correctAnswer[0] : correctAnswer)
+          normalizedCorrectAnswer = Array.isArray(correctAnswer) ? correctAnswer.join(', ') : correctAnswer
+          break
+        case 'short_answer':
+        case 'fill_blank':
+          // For text-based answers, we'll do a case-insensitive comparison with some flexibility
+          const userAnswerLower = userAnswer.toLowerCase().trim()
+          if (Array.isArray(correctAnswer)) {
+            isCorrect = correctAnswer.some(ans => 
+              userAnswerLower.includes(ans.toLowerCase()) || 
+              ans.toLowerCase().includes(userAnswerLower)
+            )
+            normalizedCorrectAnswer = correctAnswer.join(' or ')
+          } else {
+            isCorrect = userAnswerLower === correctAnswer.toLowerCase()
+            normalizedCorrectAnswer = correctAnswer
+          }
+          break
+      }
+
+      if (isCorrect) {
+        totalScore += points
+      }
+
+      feedback.push({
+        questionId,
+        isCorrect,
+        correctAnswer: normalizedCorrectAnswer,
+        explanation: question.explanation,
+        userAnswer
+      })
+    }
+
+    // Grade dictation if applicable
+    let dictationAccuracy = 0
+    let dictationFeedback = ''
+    if (exercise.type === 'DICTATION' && exercise.audioScript && userTranscription) {
+      // Simple word matching for dictation accuracy
+      const correctWords = exercise.audioScript.toLowerCase().match(/\b(\w+)\b/g) || []
+      const userWords = userTranscription.toLowerCase().match(/\b(\w+)\b/g) || []
+      
+      // Calculate accuracy based on word matches
+      const correctWordSet = new Set(correctWords)
+      const userWordSet = new Set(userWords)
+      let matchingWords = 0
+      
+      for (const word of userWordSet) {
+        if (correctWordSet.has(word)) {
+          matchingWords++
+        }
+      }
+      
+      dictationAccuracy = correctWords.length > 0 ? Math.round((matchingWords / correctWords.length) * 100) : 0
+      dictationFeedback = `You correctly transcribed ${matchingWords} out of ${correctWords.length} words.`
+      
+      // Add dictation score to total
+      const dictationPoints = 5 // Fixed points for dictation
+      maxScore += dictationPoints
+      totalScore += Math.round((dictationAccuracy / 100) * dictationPoints)
+    }
+
+    const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0
+
+    return {
+      score: totalScore,
+      maxScore,
+      percentage,
+      feedback,
+      dictationAccuracy: dictationAccuracy || undefined,
+      dictationFeedback: dictationFeedback || undefined
+    }
+  }
+
   const submitAnswers = async () => {
     if (!selectedExercise || !startTime) return;
 
-    setIsSubmitting(true);
+    // Perform automatic grading
+    const result = gradeAnswers(selectedExercise, answers, transcription)
+    setGradingResult(result)
+    setShowResults(true)
+
+    setIsSubmitting(true)
     try {
-      const listeningTime = Math.floor((Date.now() - startTime) / 1000);
+      const listeningTime = Math.floor((Date.now() - startTime) / 1000)
       
       const response = await learningApi.submitListeningAnswers(
         selectedExercise.id,
         answers,
         transcription || undefined,
         listeningTime
-      );
+      )
       
       if (response.success) {
-        Alert.alert('Success', 'Answers submitted successfully!');
-        setSelectedExercise(null);
-        setAnswers({});
-        setTranscription('');
-        setStartTime(null);
-        fetchSubmissions();
+        // Don't show alert if we're showing results
+        // Alert.alert('Success', 'Answers submitted successfully!')
+        setSelectedExercise(null)
+        setAnswers({})
+        setTranscription('')
+        setStartTime(null)
+        setShowResults(false)
+        setGradingResult(null)
+        fetchSubmissions()
       } else {
-        Alert.alert('Error', 'Failed to submit answers');
+        Alert.alert('Error', 'Failed to submit answers')
       }
     } catch (error) {
-      console.error('Failed to submit answers:', error);
-      Alert.alert('Error', 'Failed to submit answers');
+      console.error('Failed to submit answers:', error)
+      Alert.alert('Error', 'Failed to submit answers')
     } finally {
-      setIsSubmitting(false);
+      setIsSubmitting(false)
     }
   };
 
@@ -406,112 +538,243 @@ export default function ListeningScreen() {
           <View style={styles.section}>
             {selectedExercise ? (
               <View style={styles.playerContainer}>
-                {/* Exercise Header */}
-                <Card style={styles.exerciseHeaderCard}>
-                  <CardContent style={styles.exerciseHeaderContent}>
-                    <Text style={styles.exerciseTitle}>{selectedExercise.title}</Text>
-                    <View style={styles.exerciseInfo}>
-                      <Text style={styles.exerciseInfoText}>
-                        {selectedExercise.topic?.name} • {selectedExercise.level} • 
-                        {selectedExercise.estimatedTime} min
+                {/* Results Display */}
+                {showResults && gradingResult && (
+                  <Card style={styles.resultsCard}>
+                    <CardContent style={styles.resultsContent}>
+                      <Text style={styles.resultsTitle}>Your Results</Text>
+                      <Text style={styles.resultsDescription}>
+                        Here&apos;s how you did on this exercise
                       </Text>
-                      {startTime && (
-                        <Text style={styles.timerText}>
-                          {formatTime(Date.now() - startTime)}
-                        </Text>
+                      
+                      <View style={styles.scoreGrid}>
+                        <View style={styles.scoreItem}>
+                          <Text style={[styles.scoreValue, { color: getScoreColor(gradingResult.percentage) }]}>
+                            {gradingResult.percentage}%
+                          </Text>
+                          <Text style={styles.scoreLabel}>Score</Text>
+                        </View>
+                        <View style={styles.scoreItem}>
+                          <Text style={[styles.scoreValue, { color: '#3B82F6' }]}>
+                            {gradingResult.score}/{gradingResult.maxScore}
+                          </Text>
+                          <Text style={styles.scoreLabel}>Correct Points</Text>
+                        </View>
+                        <View style={styles.scoreItem}>
+                          <Text style={[styles.scoreValue, { color: '#3B82F6' }]}>
+                            {(selectedExercise.questions?.length || 0) + (selectedExercise.type === 'DICTATION' ? 1 : 0)}
+                          </Text>
+                          <Text style={styles.scoreLabel}>Total Tasks</Text>
+                        </View>
+                      </View>
+
+                      {gradingResult.dictationAccuracy !== undefined && (
+                        <View style={styles.dictationAccuracyContainer}>
+                          <Text style={styles.dictationAccuracyTitle}>Dictation Accuracy</Text>
+                          <View style={styles.dictationAccuracyContent}>
+                            <Text style={[styles.dictationAccuracyValue, { color: getScoreColor(gradingResult.dictationAccuracy || 0) }]}>
+                              {gradingResult.dictationAccuracy}%
+                            </Text>
+                            <Text style={styles.dictationAccuracyText}>{gradingResult.dictationFeedback}</Text>
+                          </View>
+                        </View>
                       )}
-                    </View>
-                  </CardContent>
-                </Card>
+
+                      <View style={styles.questionReviewContainer}>
+                        <Text style={styles.questionReviewTitle}>Question Review</Text>
+                        {gradingResult.feedback.map((feedbackItem, index) => {
+                          const question = selectedExercise.questions?.[index]
+                          return (
+                            <View key={feedbackItem.questionId} style={[
+                              styles.feedbackItem, 
+                              feedbackItem.isCorrect ? styles.correctFeedback : styles.incorrectFeedback
+                            ]}>
+                              <View style={styles.feedbackHeader}>
+                                {feedbackItem.isCorrect ? (
+                                  <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                                ) : (
+                                  <Ionicons name="close-circle" size={20} color="#EF4444" />
+                                )}
+                                <Text style={styles.feedbackQuestionNumber}>{index + 1}.</Text>
+                                <Text style={styles.feedbackQuestion} numberOfLines={2}>
+                                  {question?.question}
+                                </Text>
+                              </View>
+                              <View style={styles.feedbackContent}>
+                                <View style={styles.feedbackRow}>
+                                  <Text style={styles.feedbackLabel}>Your answer:</Text>
+                                  <Text style={[
+                                    styles.feedbackValue, 
+                                    feedbackItem.isCorrect ? styles.correctAnswer : styles.incorrectAnswer
+                                  ]}>
+                                    {feedbackItem.userAnswer || "(No answer)"}
+                                  </Text>
+                                </View>
+                                {!feedbackItem.isCorrect && (
+                                  <View style={styles.feedbackRow}>
+                                    <Text style={styles.feedbackLabel}>Correct answer:</Text>
+                                    <Text style={styles.correctAnswer}>
+                                      {Array.isArray(feedbackItem.correctAnswer) ? feedbackItem.correctAnswer.join(', ') : feedbackItem.correctAnswer}
+                                    </Text>
+                                  </View>
+                                )}
+                                {feedbackItem.explanation && (
+                                  <View style={styles.explanationContainer}>
+                                    <Text style={styles.explanationLabel}>Explanation:</Text>
+                                    <Text style={styles.explanationText}>{feedbackItem.explanation}</Text>
+                                  </View>
+                                )}
+                              </View>
+                            </View>
+                          )
+                        })}
+                      </View>
+
+                      <View style={styles.resultsButtonContainer}>
+                        <Button
+                          title="Review Exercise"
+                          variant="outline"
+                          onPress={() => {
+                            setShowResults(false)
+                            setGradingResult(null)
+                          }}
+                          style={styles.reviewButton}
+                        />
+                        <Button
+                          title="Choose Different Exercise"
+                          onPress={() => {
+                            setShowResults(false)
+                            setGradingResult(null)
+                            setSelectedExercise(null)
+                            setAnswers({})
+                            setTranscription('')
+                            setStartTime(null)
+                          }}
+                          style={styles.chooseExerciseButton}
+                        />
+                      </View>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Exercise Header */}
+                {!showResults && (
+                  <Card style={styles.exerciseHeaderCard}>
+                    <CardContent style={styles.exerciseHeaderContent}>
+                      <Text style={styles.exerciseTitle}>{selectedExercise.title}</Text>
+                      <View style={styles.exerciseInfo}>
+                        <Text style={styles.exerciseInfoText}>
+                          {selectedExercise.topic?.name} • {selectedExercise.level} • 
+                          {selectedExercise.estimatedTime} min
+                        </Text>
+                        {startTime && (
+                          <Text style={styles.timerText}>
+                            {formatTime(Date.now() - startTime)}
+                          </Text>
+                        )}
+                      </View>
+                    </CardContent>
+                  </Card>
+                )}
+                
+                {/* Audio Loading Indicator */}
+                {isAudioLoading && (
+                  <View style={styles.audioLoadingContainer}>
+                    <ActivityIndicator size="large" color="#3B82F6" />
+                    <Text style={styles.audioLoadingText}>Generating audio...</Text>
+                  </View>
+                )}
                 
                 {/* Audio Player */}
-                <Card style={styles.playerCard}>
-                  <CardContent style={styles.playerContent}>
-                    <View style={styles.audioControls}>
-                      <TouchableOpacity
-                        onPress={() => seekTo(Math.max(0, position - 1000))}
-                        style={styles.controlButton}
-                        disabled={!sound}
-                      >
-                        <Ionicons name="play-back" size={24} color="#3B82F6" />
-                      </TouchableOpacity>
-                      
-                      <TouchableOpacity
-                        onPress={playPause}
-                        style={styles.playButton}
-                        disabled={!sound}
-                      >
-                        <Ionicons 
-                          name={isPlaying ? 'pause' : 'play'} 
-                          size={32} 
-                          color="#FFFFFF" 
-                        />
-                      </TouchableOpacity>
-                      
-                      <TouchableOpacity
-                        onPress={() => seekTo(position + 10000)}
-                        style={styles.controlButton}
-                        disabled={!sound}
-                      >
-                        <Ionicons name="play-forward" size={24} color="#3B82F6" />
-                      </TouchableOpacity>
-                    </View>
-                    
-                    {/* Progress Bar */}
-                    <View style={styles.progressContainer}>
-                      <Text style={styles.timeText}>{formatTime(position)}</Text>
-                      <View style={styles.progressBar}>
-                        <View 
-                          style={[
-                            styles.progressFill, 
-                            { width: `${duration > 0 ? (position / duration) * 100 : 0}%` }
-                          ]} 
-                        />
+                {!showResults && !isAudioLoading && (
+                  <Card style={styles.playerCard}>
+                    <CardContent style={styles.playerContent}>
+                      <View style={styles.audioControls}>
+                        <TouchableOpacity
+                          onPress={() => seekTo(Math.max(0, position - 1000))}
+                          style={styles.controlButton}
+                          disabled={!sound}
+                        >
+                          <Ionicons name="play-back" size={24} color="#3B82F6" />
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          onPress={playPause}
+                          style={styles.playButton}
+                          disabled={!sound}
+                        >
+                          <Ionicons 
+                            name={isPlaying ? 'pause' : 'play'} 
+                            size={32} 
+                            color="#FFFFFF" 
+                          />
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          onPress={() => seekTo(position + 10000)}
+                          style={styles.controlButton}
+                          disabled={!sound}
+                        >
+                          <Ionicons name="play-forward" size={24} color="#3B82F6" />
+                        </TouchableOpacity>
                       </View>
-                      <Text style={styles.timeText}>{formatTime(duration)}</Text>
-                    </View>
-                    
-                    {/* Playback Speed */}
-                    <View style={styles.speedContainer}>
-                      <Text style={styles.speedLabel}>Speed:</Text>
-                      <View style={styles.speedButtons}>
-                        {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
-                          <TouchableOpacity
-                            key={rate}
-                            onPress={() => changePlaybackRate(rate)}
+                      
+                      {/* Progress Bar */}
+                      <View style={styles.progressContainer}>
+                        <Text style={styles.timeText}>{formatTime(position)}</Text>
+                        <View style={styles.progressBar}>
+                          <View 
                             style={[
-                              styles.speedButton,
-                              playbackRate === rate && styles.activeSpeedButton
-                            ]}
-                            disabled={!sound}
-                          >
-                            <Text 
-                              style={[
-                                styles.speedButtonText,
-                                playbackRate === rate && styles.activeSpeedButtonText
-                              ]}
-                            >
-                              {rate}x
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
+                              styles.progressFill, 
+                              { width: `${duration > 0 ? (position / duration) * 100 : 0}%` }
+                            ]} 
+                          />
+                        </View>
+                        <Text style={styles.timeText}>{formatTime(duration)}</Text>
                       </View>
-                    </View>
-                    
-                    {/* Script Toggle */}
-                    {selectedExercise.audioScript && (
-                      <Button
-                        title={showScript ? 'Hide Transcript' : 'Show Transcript'}
-                        variant="outline"
-                        onPress={() => setShowScript(!showScript)}
-                        style={styles.scriptButton}
-                      />
-                    )}
-                  </CardContent>
-                </Card>
+                      
+                      {/* Playback Speed */}
+                      <View style={styles.speedContainer}>
+                        <Text style={styles.speedLabel}>Speed:</Text>
+                        <View style={styles.speedButtons}>
+                          {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                            <TouchableOpacity
+                              key={rate}
+                              onPress={() => changePlaybackRate(rate)}
+                              style={[
+                                styles.speedButton,
+                                playbackRate === rate && styles.activeSpeedButton
+                              ]}
+                              disabled={!sound}
+                            >
+                              <Text 
+                                style={[
+                                  styles.speedButtonText,
+                                  playbackRate === rate && styles.activeSpeedButtonText
+                                ]}
+                              >
+                                {rate}x
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                      
+                      {/* Script Toggle */}
+                      {selectedExercise.audioScript && (
+                        <Button
+                          title={showScript ? 'Hide Transcript' : 'Show Transcript'}
+                          variant="outline"
+                          onPress={() => setShowScript(!showScript)}
+                          style={styles.scriptButton}
+                        />
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
                 
                 {/* Transcript */}
-                {showScript && selectedExercise.audioScript && (
+                {!showResults && !isAudioLoading && showScript && selectedExercise.audioScript && (
                   <Card>
                     <CardContent style={styles.transcriptContent}>
                       <Text style={styles.transcriptTitle}>Transcript</Text>
@@ -523,7 +786,7 @@ export default function ListeningScreen() {
                 )}
                 
                 {/* Questions */}
-                {selectedExercise.questions && selectedExercise.questions.length > 0 && (
+                {!showResults && !isAudioLoading && selectedExercise.questions && selectedExercise.questions.length > 0 && (
                   <Card>
                     <CardContent style={styles.questionsContent}>
                       <Text style={styles.questionsTitle}>Questions</Text>
@@ -576,7 +839,7 @@ export default function ListeningScreen() {
                 )}
                 
                 {/* Dictation */}
-                {selectedExercise.type === 'DICTATION' && (
+                {!showResults && !isAudioLoading && selectedExercise.type === 'DICTATION' && (
                   <Card>
                     <CardContent style={styles.dictationContent}>
                       <Text style={styles.dictationTitle}>Dictation</Text>
@@ -597,20 +860,22 @@ export default function ListeningScreen() {
                 )}
                 
                 {/* Submit Button */}
-                <View style={styles.buttonContainer}>
-                  <Button
-                    title="Choose Different Exercise"
-                    variant="outline"
-                    onPress={() => setSelectedExercise(null)}
-                    style={styles.backButton}
-                  />
-                  <Button
-                    title={isSubmitting ? 'Submitting...' : 'Submit Answers'}
-                    onPress={submitAnswers}
-                    disabled={isSubmitting}
-                    style={styles.submitButton}
-                  />
-                </View>
+                {!showResults && !isAudioLoading && (
+                  <View style={styles.buttonContainer}>
+                    <Button
+                      title="Choose Different Exercise"
+                      variant="outline"
+                      onPress={() => setSelectedExercise(null)}
+                      style={styles.backButton}
+                    />
+                    <Button
+                      title={isSubmitting ? 'Submitting...' : 'Submit Answers'}
+                      onPress={submitAnswers}
+                      disabled={isSubmitting}
+                      style={styles.submitButton}
+                    />
+                  </View>
+                )}
               </View>
             ) : (
               <View style={styles.emptyState}>
@@ -751,6 +1016,21 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 16,
     color: '#64748B',
+  },
+  // Audio loading styles
+  audioLoadingContainer: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    marginVertical: 8,
+  },
+  audioLoadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#64748B',
+    fontWeight: '500',
   },
   tabContainer: {
     flexDirection: 'row',
@@ -1128,7 +1408,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginBottom: 16,
   },
- scoresContainer: {
+  scoresContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     marginBottom: 16,
@@ -1137,7 +1417,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scoreValue: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 4,
   },
@@ -1177,6 +1457,139 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1E293B',
     lineHeight: 20,
+  },
+  resultsCard: {
+    backgroundColor: '#FFFFFF',
+    marginBottom: 16,
+  },
+  resultsContent: {
+    padding: 16,
+  },
+  resultsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 8,
+  },
+  resultsDescription: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 16,
+  },
+  scoreGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 24,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+  },
+  dictationAccuracyContainer: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+  },
+  dictationAccuracyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 12,
+  },
+  dictationAccuracyContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dictationAccuracyValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginRight: 12,
+  },
+  dictationAccuracyText: {
+    fontSize: 14,
+    color: '#64748B',
+    flex: 1,
+  },
+  questionReviewContainer: {
+    marginBottom: 24,
+  },
+  questionReviewTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 12,
+  },
+  feedbackItem: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  correctFeedback: {
+    borderColor: '#10B981',
+    backgroundColor: '#F0FDF4',
+  },
+  incorrectFeedback: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+  },
+  feedbackHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  feedbackQuestionNumber: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginRight: 8,
+  },
+  feedbackQuestion: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    flex: 1,
+  },
+  feedbackContent: {
+    paddingLeft: 28,
+  },
+  feedbackRow: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  correctAnswer: {
+    color: '#10B981',
+  },
+  incorrectAnswer: {
+    color: '#EF4444',
+  },
+  explanationContainer: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+  },
+  explanationLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  explanationText: {
+    fontSize: 14,
+    color: '#1E293B',
+  },
+  resultsButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  reviewButton: {
+    flex: 1,
+    marginRight: 8,
+  },
+  chooseExerciseButton: {
+    flex: 1,
+    marginLeft: 8,
   },
 });
 

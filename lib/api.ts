@@ -284,8 +284,8 @@ export const authApi = {
 export const learningApi = {
   // Vocabulary APIs
   getVocabularyReview: () => apiClient.get('/review'),
-  submitVocabularyRating: (cardId: string, rating: string) => 
-    apiClient.post('/review', { cardId, rating }),
+  submitVocabularyRating: (wordId: string, rating: number) => 
+    apiClient.post('/review/update', { wordId, rating }),
   // Vocabulary management APIs
   getVocabularyCards: (params?: any) => apiClient.get('/vocabulary', { params }),
   addVocabularyCard: (data: any) => apiClient.post('/vocabulary', data),

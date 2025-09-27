@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,6 +27,7 @@ interface ReadingExercise {
   wordCount?: number;
   estimatedTime: number;
   questions?: ReadingQuestion[];
+  comprehensionQuestions?: ReadingQuestion[];
   topic?: {
     id: string;
     name: string;
@@ -35,9 +37,12 @@ interface ReadingExercise {
 interface ReadingQuestion {
   id: string;
   question: string;
-  type: 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'FILL_BLANK' | 'SHORT_ANSWER';
+  type: 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'FILL_BLANK' | 'SHORT_ANSWER' | 
+         'multiple_choice' | 'true_false' | 'fill_blank' | 'short_answer';
   options?: string[];
-  correctAnswer?: string;
+  correctAnswer?: string | string[];
+  explanation?: string;
+  points?: number;
 }
 
 interface ReadingSubmission {
@@ -49,6 +54,28 @@ interface ReadingSubmission {
   overallScore?: number;
   status: string;
   createdAt: string;
+  autoGradeResult?: GradingResult;
+}
+
+interface GradingResult {
+  score: number;
+  maxScore: number;
+  percentage: number;
+  feedback: {
+    questionId: string;
+    isCorrect: boolean;
+    correctAnswer: string | string[];
+    explanation?: string;
+    userAnswer: string;
+  }[];
+}
+
+interface QuestionFeedback {
+  questionId: string;
+  isCorrect: boolean;
+  correctAnswer: string | string[];
+  explanation?: string;
+  userAnswer: string;
 }
 
 export default function ReadingScreen() {
@@ -61,20 +88,37 @@ export default function ReadingScreen() {
   const [startTime, setStartTime] = useState<number | null>(null);
   const [submissions, setSubmissions] = useState<ReadingSubmission[]>([]);
   const [readingStarted, setReadingStarted] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [gradingResult, setGradingResult] = useState<GradingResult | null>(null);
+  const [selectedLevel, setSelectedLevel] = useState<string>('all');
+  const [selectedType, setSelectedType] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     fetchExercises();
     fetchSubmissions();
-  }, []);
+  }, [selectedLevel, selectedType, searchQuery]);
 
   const fetchExercises = async () => {
     setIsLoading(true);
     try {
-      const response = await apiClient.get<PaginationResponse<ReadingExercise>>('/reading/exercises', {
-        type: 'COMPREHENSION',
-        level: 'Beginner',
+      const params: any = {
         pageSize: 20
-      });
+      };
+      
+      if (selectedLevel !== 'all') {
+        params.level = selectedLevel;
+      }
+      
+      if (selectedType !== 'all') {
+        params.type = selectedType;
+      }
+      
+      if (searchQuery) {
+        params.searchQuery = searchQuery;
+      }
+
+      const response = await apiClient.get<PaginationResponse<ReadingExercise>>('/reading/exercises', params);
       if (response.success && response.data) {
         setExercises(response.data.data || []);
       }
@@ -103,6 +147,8 @@ export default function ReadingScreen() {
     setStartTime(Date.now());
     setReadingStarted(false);
     setActiveTab('read');
+    setGradingResult(null);
+    setShowResults(false);
   };
 
   const beginReading = () => {
@@ -114,13 +160,91 @@ export default function ReadingScreen() {
     setAnswers(prev => ({ ...prev, [questionId]: answer }));
   };
 
+  // Automatic grading function
+  const gradeAnswers = (exercise: ReadingExercise, userAnswers: Record<string, string>): GradingResult => {
+    const questions = exercise.comprehensionQuestions || exercise.questions || [];
+    let totalScore = 0;
+    let maxScore = 0;
+    const feedback: QuestionFeedback[] = [];
+
+    for (const [index, question] of questions.entries()) {
+      const questionId = question.id;
+      const userAnswer = userAnswers[questionId] || '';
+      const correctAnswer = question.correctAnswer;
+      const points = question.points || 1;
+      maxScore += points;
+
+      let isCorrect = false;
+      let normalizedCorrectAnswer: string | string[] = '';
+
+      switch (question.type) {
+        case 'MULTIPLE_CHOICE':
+        case 'multiple_choice':
+          isCorrect = userAnswer === (Array.isArray(correctAnswer) ? correctAnswer[0] : correctAnswer);
+          normalizedCorrectAnswer = Array.isArray(correctAnswer) ? correctAnswer.join(', ') : correctAnswer || '';
+          break;
+        case 'TRUE_FALSE':
+        case 'true_false':
+          isCorrect = userAnswer === (Array.isArray(correctAnswer) ? correctAnswer[0] : correctAnswer);
+          normalizedCorrectAnswer = Array.isArray(correctAnswer) ? correctAnswer.join(', ') : correctAnswer || '';
+          break;
+        case 'FILL_BLANK':
+        case 'fill_blank':
+        case 'SHORT_ANSWER':
+        case 'short_answer':
+          // For text-based answers, we'll do a case-insensitive comparison with some flexibility
+          const userAnswerLower = userAnswer.toLowerCase().trim();
+          if (Array.isArray(correctAnswer)) {
+            isCorrect = correctAnswer.some(ans => 
+              userAnswerLower.includes(ans.toLowerCase()) || 
+              ans.toLowerCase().includes(userAnswerLower)
+            );
+            normalizedCorrectAnswer = correctAnswer.join(' or ');
+          } else if (typeof correctAnswer === 'string') {
+            isCorrect = userAnswerLower === correctAnswer.toLowerCase();
+            normalizedCorrectAnswer = correctAnswer;
+          }
+          break;
+      }
+
+      if (isCorrect) {
+        totalScore += points;
+      }
+
+      feedback.push({
+        questionId,
+        isCorrect,
+        correctAnswer: normalizedCorrectAnswer,
+        explanation: question.explanation,
+        userAnswer
+      });
+    }
+
+    const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+
+    return {
+      score: totalScore,
+      maxScore,
+      percentage,
+      feedback
+    };
+  };
+
   const submitAnswers = async () => {
     if (!selectedExercise || !startTime) return;
 
-    if (Object.keys(answers).length !== selectedExercise.questions?.length) {
-      Alert.alert('Incomplete', 'Please answer all questions before submitting.');
+    const totalQuestions = (selectedExercise.comprehensionQuestions || selectedExercise.questions)?.length || 0;
+    const answeredQuestions = Object.keys(answers).length;
+
+    if (answeredQuestions !== totalQuestions) {
+      Alert.alert('Incomplete', `Please answer all questions before submitting. (${answeredQuestions}/${totalQuestions} answered)`);
       return;
     }
+
+    // Perform automatic grading
+    const result = gradeAnswers(selectedExercise, answers);
+    setGradingResult(result);
+    setShowResults(true);
 
     setIsSubmitting(true);
     try {
@@ -129,7 +253,8 @@ export default function ReadingScreen() {
       const response = await apiClient.post('/reading/submissions', {
         exerciseId: selectedExercise.id,
         answers,
-        readingTime
+        readingTime,
+        autoGradeResult: result
       });
 
       if (response.success) {
@@ -145,6 +270,8 @@ export default function ReadingScreen() {
         setAnswers({});
         setStartTime(null);
         setReadingStarted(false);
+        setShowResults(false);
+        setGradingResult(null);
         fetchSubmissions();
       } else {
         Alert.alert('Error', response.error || 'Failed to submit answers');
@@ -157,7 +284,7 @@ export default function ReadingScreen() {
     }
   };
 
-  const getLevelColor = (level: string) => {
+  const getLevelColor = (level: string): [string, string] => {
     switch (level) {
       case 'Beginner':
         return ['#10B981', '#059669'];
@@ -170,10 +297,22 @@ export default function ReadingScreen() {
     }
   };
 
+  const getScoreColor = (score: number) => {
+    if (score >= 90) return '#10B981'; // green
+    if (score >= 80) return '#3B82F6'; // blue
+    if (score >= 70) return '#F59E0B'; // yellow
+    return '#EF4444'; // red
+  };
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const calculateReadingSpeed = (wordCount: number, timeInSeconds: number) => {
+    const wordsPerMinute = Math.round((wordCount / timeInSeconds) * 60);
+    return wordsPerMinute;
   };
 
   if (isLoading) {
@@ -215,6 +354,80 @@ export default function ReadingScreen() {
         {activeTab === 'practice' && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Choose a Reading Exercise</Text>
+            
+            {/* Filters */}
+            <View style={styles.filterContainer}>
+              <View style={styles.filterRow}>
+                <TouchableOpacity 
+                  key="all-types"
+                  style={[styles.filterButton, selectedType === 'all' && styles.activeFilterButton]}
+                  onPress={() => setSelectedType('all')}
+                >
+                  <Text style={[styles.filterButtonText, selectedType === 'all' && styles.activeFilterButtonText]}>
+                    All Types
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  key="comprehension"
+                  style={[styles.filterButton, selectedType === 'COMPREHENSION' && styles.activeFilterButton]}
+                  onPress={() => setSelectedType('COMPREHENSION')}
+                >
+                  <Text style={[styles.filterButtonText, selectedType === 'COMPREHENSION' && styles.activeFilterButtonText]}>
+                    Comprehension
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  key="vocabulary"
+                  style={[styles.filterButton, selectedType === 'VOCABULARY' && styles.activeFilterButton]}
+                  onPress={() => setSelectedType('VOCABULARY')}
+                >
+                  <Text style={[styles.filterButtonText, selectedType === 'VOCABULARY' && styles.activeFilterButtonText]}>
+                    Vocabulary
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.filterRow}>
+                <TouchableOpacity 
+                  key="all-levels"
+                  style={[styles.filterButton, selectedLevel === 'all' && styles.activeFilterButton]}
+                  onPress={() => setSelectedLevel('all')}
+                >
+                  <Text style={[styles.filterButtonText, selectedLevel === 'all' && styles.activeFilterButtonText]}>
+                    All Levels
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  key="beginner"
+                  style={[styles.filterButton, selectedLevel === 'Beginner' && styles.activeFilterButton]}
+                  onPress={() => setSelectedLevel('Beginner')}
+                >
+                  <Text style={[styles.filterButtonText, selectedLevel === 'Beginner' && styles.activeFilterButtonText]}>
+                    Beginner
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  key="intermediate"
+                  style={[styles.filterButton, selectedLevel === 'Intermediate' && styles.activeFilterButton]}
+                  onPress={() => setSelectedLevel('Intermediate')}
+                >
+                  <Text style={[styles.filterButtonText, selectedLevel === 'Intermediate' && styles.activeFilterButtonText]}>
+                    Intermediate
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.searchContainer}>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search exercises..."
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+                <Ionicons name="search" size={20} color="#64748B" style={styles.searchIcon} />
+              </View>
+            </View>
+            
             <View style={styles.exercisesGrid}>
               {exercises.map((exercise) => (
                 <TouchableOpacity
@@ -238,19 +451,19 @@ export default function ReadingScreen() {
                     )}
                     <View style={styles.exerciseDetails}>
                       {exercise.wordCount && (
-                        <View style={styles.detailItem}>
+                        <View key="word-count" style={styles.detailItem}>
                           <Ionicons name="document-text" size={16} color="rgba(255, 255, 255, 0.8)" />
                           <Text style={styles.detailText}>{exercise.wordCount} words</Text>
                         </View>
                       )}
-                      <View style={styles.detailItem}>
+                      <View key="time" style={styles.detailItem}>
                         <Ionicons name="time" size={16} color="rgba(255, 255, 255, 0.8)" />
                         <Text style={styles.detailText}>{exercise.estimatedTime} min</Text>
                       </View>
-                      {exercise.questions && (
-                        <View style={styles.detailItem}>
+                      {(exercise.questions || exercise.comprehensionQuestions) && (
+                        <View key="questions" style={styles.detailItem}>
                           <Ionicons name="help-circle" size={16} color="rgba(255, 255, 255, 0.8)" />
-                          <Text style={styles.detailText}>{exercise.questions.length} questions</Text>
+                          <Text style={styles.detailText}>{(exercise.questions || exercise.comprehensionQuestions)?.length} questions</Text>
                         </View>
                       )}
                     </View>
@@ -270,22 +483,22 @@ export default function ReadingScreen() {
                   <Ionicons name="book" size={48} color="#3B82F6" />
                   <Text style={styles.readyTitle}>{selectedExercise.title}</Text>
                   <View style={styles.readyStats}>
-                    <View style={styles.readyStat}>
+                    <View key="words" style={styles.readyStat}>
                       <Ionicons name="document-text" size={20} color="#64748B" />
                       <Text style={styles.readyStatText}>
                         {selectedExercise.wordCount} words
                       </Text>
                     </View>
-                    <View style={styles.readyStat}>
+                    <View key="time" style={styles.readyStat}>
                       <Ionicons name="time" size={20} color="#64748B" />
                       <Text style={styles.readyStatText}>
                         ~{selectedExercise.estimatedTime} minutes
                       </Text>
                     </View>
-                    <View style={styles.readyStat}>
+                    <View key="questions" style={styles.readyStat}>
                       <Ionicons name="help-circle" size={20} color="#64748B" />
                       <Text style={styles.readyStatText}>
-                        {selectedExercise.questions?.length} questions
+                        {(selectedExercise.questions || selectedExercise.comprehensionQuestions)?.length} questions
                       </Text>
                     </View>
                   </View>
@@ -294,6 +507,119 @@ export default function ReadingScreen() {
                     onPress={beginReading}
                     style={styles.startButton}
                   />
+                </CardContent>
+              </Card>
+            ) : showResults && gradingResult ? (
+              <Card style={styles.resultsCard}>
+                <CardContent style={styles.resultsContent}>
+                  <Text style={styles.resultsTitle}>Your Results</Text>
+                  <Text style={styles.resultsSubtitle}>Here&apos;s how you did on this exercise</Text>
+                  
+                  <View style={styles.scoreContainer}>
+                    <View key="percentage" style={styles.scoreBox}>
+                      <Text style={[styles.scoreValue, { color: getScoreColor(gradingResult.percentage) }]}>
+                        {gradingResult.percentage}%
+                      </Text>
+                      <Text style={styles.scoreLabel}>Score</Text>
+                    </View>
+                    <View key="correct" style={styles.scoreBox}>
+                      <Text style={styles.scoreValuePrimary}>
+                        {gradingResult.score}/{gradingResult.maxScore}
+                      </Text>
+                      <Text style={styles.scoreLabel}>Correct Answers</Text>
+                    </View>
+                    <View key="total" style={styles.scoreBox}>
+                      <Text style={styles.scoreValuePrimary}>
+                        {(selectedExercise.questions || selectedExercise.comprehensionQuestions)?.length}
+                      </Text>
+                      <Text style={styles.scoreLabel}>Total Questions</Text>
+                    </View>
+                  </View>
+                  
+                  <Text style={styles.questionReviewTitle}>Question Review</Text>
+                  {(selectedExercise.comprehensionQuestions || selectedExercise.questions)?.map((question, index) => {
+                    const feedbackItem = gradingResult.feedback.find(f => f.questionId === question.id);
+                    return (
+                      <Card 
+                        key={question.id} 
+                        style={
+                          feedbackItem?.isCorrect 
+                            ? {
+                                ...styles.feedbackCard,
+                                borderLeftColor: styles.correctCard.borderLeftColor,
+                                backgroundColor: styles.correctCard.backgroundColor,
+                              }
+                            : {
+                                ...styles.feedbackCard,
+                                borderLeftColor: styles.incorrectCard.borderLeftColor,
+                                backgroundColor: styles.incorrectCard.backgroundColor,
+                              }
+                        }
+                      >
+                        <CardContent style={styles.feedbackContent}>
+                          <View style={styles.feedbackHeader}>
+                            <Text style={styles.questionNumber}>
+                              Question {index + 1}
+                            </Text>
+                            <Ionicons 
+                              name={feedbackItem?.isCorrect ? "checkmark-circle" : "close-circle"} 
+                              size={24} 
+                              color={feedbackItem?.isCorrect ? "#10B981" : "#EF4444"} 
+                            />
+                          </View>
+                          <Text style={styles.questionText}>{question.question}</Text>
+                          
+                          <View key="user-answer" style={styles.answerRow}>
+                            <Text style={styles.answerLabel}>Your answer:</Text>
+                            <Text style={[
+                              styles.answerValue,
+                              feedbackItem?.isCorrect ? styles.correctAnswer : styles.incorrectAnswer
+                            ]}>
+                              {feedbackItem?.userAnswer || "(No answer)"}
+                            </Text>
+                          </View>
+                          
+                          {!feedbackItem?.isCorrect && (
+                            <View key="correct-answer" style={styles.answerRow}>
+                              <Text style={styles.answerLabel}>Correct answer:</Text>
+                              <Text style={styles.correctAnswer}>
+                                {Array.isArray(feedbackItem?.correctAnswer) 
+                                  ? feedbackItem?.correctAnswer.join(', ') 
+                                  : feedbackItem?.correctAnswer}
+                              </Text>
+                            </View>
+                          )}
+                          
+                          {feedbackItem?.explanation && (
+                            <View key="explanation" style={styles.explanationContainer}>
+                              <Text style={styles.explanationLabel}>Explanation:</Text>
+                              <Text style={styles.explanationText}>{feedbackItem.explanation}</Text>
+                            </View>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                  
+                  <View style={styles.resultsActions}>
+                    <Button
+                      key="review"
+                      title="Review Exercise"
+                      onPress={() => setShowResults(false)}
+                      variant="secondary"
+                      style={styles.reviewButton}
+                    />
+                    <Button
+                      key="choose"
+                      title="Choose Different Exercise"
+                      onPress={() => {
+                        setShowResults(false);
+                        setSelectedExercise(null);
+                        setGradingResult(null);
+                      }}
+                      style={styles.chooseExerciseButton}
+                    />
+                  </View>
                 </CardContent>
               </Card>
             ) : (
@@ -307,77 +633,121 @@ export default function ReadingScreen() {
                 </Card>
 
                 {/* Questions */}
-                {selectedExercise.questions && (
-                  <View style={styles.questionsContainer}>
-                    <Text style={styles.questionsTitle}>Questions</Text>
-                    {selectedExercise.questions.map((question, index) => (
-                      <Card key={question.id} style={styles.questionCard}>
-                        <CardContent style={styles.questionContent}>
-                          <Text style={styles.questionNumber}>
-                            Question {index + 1}
+                <View style={styles.questionsContainer}>
+                  {/* Debug: Show questions array info */}
+                  <Text style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+                    Questions: {selectedExercise.questions?.length || 0}, 
+                    Comprehension: {selectedExercise.comprehensionQuestions?.length || 0}
+                  </Text>
+                  
+                  {/* Show message if no questions */}
+                  {!(selectedExercise.questions || selectedExercise.comprehensionQuestions) && (
+                    <Text style={{ fontSize: 14, color: '#f00', marginBottom: 16 }}>
+                      No questions found in this exercise!
+                    </Text>
+                  )}
+                  
+                  <Text style={styles.questionsTitle}>Questions</Text>
+                  {(selectedExercise.comprehensionQuestions || selectedExercise.questions)?.map((question, index) => (
+                    <Card key={index} style={styles.questionCard}>
+                      <CardContent style={styles.questionContent}>
+                        <Text style={styles.questionNumber}>
+                          Question {index + 1}
+                        </Text>
+                        <Text style={styles.questionText}>{question.question}</Text>
+                        {/* Multiple choice questions */}
+                        {((question.type === 'MULTIPLE_CHOICE' || question.type === 'multiple_choice') && question.options) && (
+                          <View style={styles.optionsContainer}>
+                            {question.options.map((option, optionIndex) => (
+                              <TouchableOpacity
+                                key={`${index}-${optionIndex}`}
+                                onPress={() => handleAnswerChange(`q${index}`, option)}
+                                style={styles.optionItem}
+                              >
+                                <RadioButton
+                                  key={`radio-${index}-${optionIndex}`}
+                                  value={option}
+                                  status={answers[`q${index}`] === option ? 'checked' : 'unchecked'}
+                                  onPress={() => handleAnswerChange(`q${index}`, option)}
+                                  color="#3B82F6"
+                                />
+                                <Text style={styles.optionText}>{option}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+
+                        {/* True/False questions */}
+                        {(question.type === 'TRUE_FALSE' || question.type === 'true_false') && (
+                          <View style={styles.optionsContainer}>
+                            {['True', 'False'].map((option, optionIndex) => (
+                              <TouchableOpacity
+                                key={`${index}-${option}`}
+                                onPress={() => handleAnswerChange(`q${index}`, option)}
+                                style={styles.optionItem}
+                              >
+                                <RadioButton
+                                  key={`radio-${index}-${optionIndex}`}
+                                  value={option}
+                                  status={answers[`q${index}`] === option ? 'checked' : 'unchecked'}
+                                  onPress={() => handleAnswerChange(`q${index}`, option)}
+                                  color="#3B82F6"
+                                />
+                                <Text style={styles.optionText}>{option}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                        
+                        {/* Short answer and fill blank questions */}
+                        {(question.type === 'SHORT_ANSWER' || question.type === 'FILL_BLANK' || 
+                          question.type === 'short_answer' || question.type === 'fill_blank') && (
+                          <View style={styles.textInputContainer}>
+                            <TextInput
+                              key={`text-${index}`}
+                              style={styles.textInput}
+                              placeholder="Enter your answer"
+                              value={answers[`q${index}`] || ''}
+                              onChangeText={(text) => handleAnswerChange(`q${index}`, text)}
+                              multiline
+                            />
+                          </View>
+                        )}
+                        
+                        {/* Debug: Show when no matching type is found */}
+                        {question.type !== 'MULTIPLE_CHOICE' && 
+                         question.type !== 'TRUE_FALSE' && 
+                         question.type !== 'SHORT_ANSWER' && 
+                         question.type !== 'FILL_BLANK' &&
+                         question.type !== 'multiple_choice' && 
+                         question.type !== 'true_false' && 
+                         question.type !== 'short_answer' && 
+                         question.type !== 'fill_blank' && (
+                          <Text style={{ fontSize: 12, color: '#f00', marginTop: 4 }}>
+                            Unsupported question type: {question.type}
                           </Text>
-                          <Text style={styles.questionText}>{question.question}</Text>
-                          
-                          {question.type === 'MULTIPLE_CHOICE' && question.options && (
-                            <View style={styles.optionsContainer}>
-                              {question.options.map((option, optionIndex) => (
-                                <TouchableOpacity
-                                  key={optionIndex}
-                                  onPress={() => handleAnswerChange(question.id, option)}
-                                  style={styles.optionItem}
-                                >
-                                  <RadioButton
-                                    value={option}
-                                    status={answers[question.id] === option ? 'checked' : 'unchecked'}
-                                    onPress={() => handleAnswerChange(question.id, option)}
-                                    color="#3B82F6"
-                                  />
-                                  <Text style={styles.optionText}>{option}</Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          )}
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
 
-                          {question.type === 'TRUE_FALSE' && (
-                            <View style={styles.optionsContainer}>
-                              {['True', 'False'].map((option) => (
-                                <TouchableOpacity
-                                  key={option}
-                                  onPress={() => handleAnswerChange(question.id, option)}
-                                  style={styles.optionItem}
-                                >
-                                  <RadioButton
-                                    value={option}
-                                    status={answers[question.id] === option ? 'checked' : 'unchecked'}
-                                    onPress={() => handleAnswerChange(question.id, option)}
-                                    color="#3B82F6"
-                                  />
-                                  <Text style={styles.optionText}>{option}</Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          )}
-                        </CardContent>
-                      </Card>
-                    ))}
-
-                    <View style={styles.submitContainer}>
-                      <Button
-                        title="Choose Different Exercise"
-                        onPress={() => setActiveTab('practice')}
-                        style={styles.cancelButton}
-                        variant="secondary"
-                      />
-                      <Button
-                        title={isSubmitting ? 'Submitting...' : 'Submit Answers'}
-                        onPress={submitAnswers}
-                        disabled={isSubmitting || Object.keys(answers).length !== selectedExercise.questions?.length}
-                        loading={isSubmitting}
-                        style={styles.submitButton}
-                      />
-                    </View>
+                  <View style={styles.submitContainer}>
+                    <Button
+                      title="Choose Different Exercise"
+                      onPress={() => setSelectedExercise(null)}
+                      style={styles.cancelButton}
+                      variant="secondary"
+                    />
+                    <Button
+                      title={isSubmitting ? 'Submitting...' : 'Submit Answers'}
+                      onPress={submitAnswers}
+                      disabled={isSubmitting || Object.keys(answers).length === 0 || Object.keys(answers).length !== (selectedExercise.questions || selectedExercise.comprehensionQuestions)?.length}
+                      loading={isSubmitting}
+                      style={styles.submitButton}
+                    />
                   </View>
-                )}
+                </View>
+
               </>
             )}
           </View>
@@ -399,32 +769,92 @@ export default function ReadingScreen() {
               </Card>
             ) : (
               <View style={styles.submissionsContainer}>
-                {submissions.map((submission) => (
-                  <Card key={submission.id} style={styles.submissionCard}>
-                    <CardContent style={styles.submissionContent}>
-                      <View style={styles.submissionHeader}>
-                        <Text style={styles.submissionDate}>
-                          {new Date(submission.createdAt).toLocaleDateString()}
-                        </Text>
+                {submissions.map((submission) => {
+                  const exercise = exercises.find(e => e.id === submission.exerciseId);
+                  return (
+                    <Card key={submission.id} style={styles.submissionCard}>
+                      <CardContent style={styles.submissionContent}>
+                        <View style={styles.submissionHeader}>
+                          <Text style={styles.submissionTitle}>
+                            {exercise?.title || 'Unknown Exercise'}
+                          </Text>
+                          <Text style={styles.submissionDate}>
+                            {new Date(submission.createdAt).toLocaleDateString()}
+                          </Text>
+                        </View>
+                        
                         {submission.overallScore && (
-                          <Badge style={styles.scoreBadge}>
-                            <Text style={styles.scoreText}>{submission.overallScore}%</Text>
-                          </Badge>
+                          <View key="overall-score" style={styles.scoreRow}>
+                            <Text style={styles.scoreLabelProgress}>Overall Score:</Text>
+                            <Badge style={{
+                              backgroundColor: getScoreColor(submission.overallScore),
+                              paddingHorizontal: 8,
+                              paddingVertical: 4,
+                              borderRadius: 8,
+                            }}>
+                              <Text style={styles.scoreText}>{submission.overallScore}%</Text>
+                            </Badge>
+                          </View>
                         )}
-                      </View>
-                      {submission.readingTime && (
-                        <Text style={styles.submissionTime}>
-                          Reading time: {formatTime(submission.readingTime)}
-                        </Text>
-                      )}
-                      {submission.comprehensionScore && (
-                        <Text style={styles.submissionScore}>
-                          Comprehension: {submission.comprehensionScore}%
-                        </Text>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+                        
+                        {submission.autoGradeResult && (
+                          <View key="correct-answers" style={styles.scoreRow}>
+                            <Text style={styles.scoreLabelProgress}>Correct Answers:</Text>
+                            <Text style={styles.scoreValueProgress}>
+                              {submission.autoGradeResult.score}/{submission.autoGradeResult.maxScore}
+                            </Text>
+                          </View>
+                        )}
+                        
+                        {submission.readingTime && (
+                          <View key="reading-time" style={styles.scoreRow}>
+                            <Text style={styles.scoreLabelProgress}>Reading Time:</Text>
+                            <Text style={styles.scoreValueProgress}>
+                              {formatTime(submission.readingTime)}
+                            </Text>
+                          </View>
+                        )}
+                        
+                        {exercise?.wordCount && submission.readingTime && (
+                          <View key="reading-speed" style={styles.scoreRow}>
+                            <Text style={styles.scoreLabelProgress}>Reading Speed:</Text>
+                            <Text style={styles.scoreValueProgress}>
+                              {calculateReadingSpeed(exercise.wordCount, submission.readingTime)} WPM
+                            </Text>
+                          </View>
+                        )}
+                        
+                        {submission.autoGradeResult?.feedback && (
+                          <View key="feedback" style={styles.feedbackSummary}>
+                            <Text style={styles.feedbackTitle}>Summary</Text>
+                            <View style={styles.feedbackItems}>
+                              {submission.autoGradeResult.feedback.slice(0, 3).map((item, index) => (
+                                <View key={`feedback-${index}`} style={styles.feedbackItem}>
+                                  <Ionicons 
+                                    name={item.isCorrect ? "checkmark-circle" : "close-circle"} 
+                                    size={16} 
+                                    color={item.isCorrect ? "#10B981" : "#EF4444"} 
+                                  />
+                                  <Text style={[
+                                    styles.feedbackItemText,
+                                    item.isCorrect ? styles.correctText : styles.incorrectText
+                                  ]}>
+                                    Q{index + 1}: {item.isCorrect ? 'Correct' : 'Incorrect'}
+                                  </Text>
+                                </View>
+                              ))}
+                              {submission.autoGradeResult.feedback.length > 3 && (
+                                <Text key="more" style={styles.moreFeedbackText}>
+                                  +{submission.autoGradeResult.feedback.length - 3} more questions
+                                </Text>
+                              )}
+                            </View>
+                          </View>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </View>
             )}
           </View>
@@ -486,6 +916,50 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1E293B',
     marginBottom: 20,
+  },
+  filterContainer: {
+    marginBottom: 20,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+    flexWrap: 'wrap',
+  },
+  filterButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+  },
+  activeFilterButton: {
+    backgroundColor: '#3B82F6',
+  },
+  filterButtonText: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  activeFilterButtonText: {
+    color: '#FFFFFF',
+  },
+  searchContainer: {
+    position: 'relative',
+    marginBottom: 10,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#1E293B',
+    paddingLeft: 36,
+  },
+  searchIcon: {
+    position: 'absolute',
+    left: 12,
+    top: 10,
   },
   exercisesGrid: {
     gap: 16,
@@ -642,6 +1116,18 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
+  textInputContainer: {
+    paddingVertical: 8,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#1E293B',
+  },
   submitContainer: {
     flexDirection: 'row',
     gap: 12,
@@ -654,6 +1140,126 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   submitButton: {
+    flex: 1,
+    backgroundColor: '#3B82F6',
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  resultsCard: {
+    marginBottom: 24,
+  },
+  resultsContent: {
+    padding: 20,
+  },
+  resultsTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  resultsSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 20,
+  },
+  scoreContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+  },
+  scoreBox: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  scoreValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  scoreValuePrimary: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#3B82F6',
+  },
+  scoreLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  questionReviewTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 16,
+  },
+  feedbackCard: {
+    marginBottom: 12,
+    borderLeftWidth: 4,
+  },
+  correctCard: {
+    borderLeftColor: '#10B981',
+    backgroundColor: 'rgba(16, 185, 129, 0.05)',
+  },
+  incorrectCard: {
+    borderLeftColor: '#EF4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.05)',
+  },
+  feedbackContent: {
+    padding: 16,
+  },
+  feedbackHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  answerRow: {
+    flexDirection: 'row',
+    marginVertical: 2,
+  },
+  answerLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginRight: 8,
+  },
+  answerValue: {
+    fontSize: 14,
+    flex: 1,
+  },
+  correctAnswer: {
+    color: '#10B981',
+  },
+  incorrectAnswer: {
+    color: '#EF4444',
+  },
+  explanationContainer: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 4,
+  },
+  explanationLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  explanationText: {
+    fontSize: 12,
+    color: '#475569',
+    marginTop: 2,
+  },
+  resultsActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 24,
+  },
+  reviewButton: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  chooseExerciseButton: {
     flex: 1,
     backgroundColor: '#3B82F6',
     paddingVertical: 12,
@@ -694,10 +1300,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  submissionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    flex: 1,
+  },
   submissionDate: {
+    fontSize: 12,
+    color: '#94A3B8',
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 4,
+  },
+  scoreLabelProgress: {
     fontSize: 14,
     color: '#64748B',
-    fontWeight: '500',
+  },
+  scoreValueProgress: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
   },
   scoreBadge: {
     backgroundColor: '#10B981',
@@ -710,13 +1336,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  submissionTime: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginBottom: 4,
+  feedbackSummary: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
   },
-  submissionScore: {
+  feedbackTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 8,
+  },
+  feedbackItems: {
+    gap: 4,
+  },
+  feedbackItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  feedbackItemText: {
+    fontSize: 12,
+    marginLeft: 6,
+  },
+  correctText: {
+    color: '#10B981',
+  },
+  incorrectText: {
+    color: '#EF4444',
+  },
+  moreFeedbackText: {
     fontSize: 12,
     color: '#94A3B8',
+    marginTop: 4,
   },
 });
