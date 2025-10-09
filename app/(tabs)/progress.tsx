@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,20 +6,46 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  Alert,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Card, CardHeader, CardTitle, CardContent, Badge, Progress, Avatar } from '@/components/ui';
+import { Card, CardHeader, CardTitle, CardContent, Badge, Progress, Avatar, Button } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatNumber, getAchievementColor } from '@/lib/utils';
+import { streakApi } from '@/lib/api';
+import { ApiResponse } from '@/types';
+
+// Define types for streak data
+interface StreakInfo {
+  currentStreak: number;
+  longestStreak: number;
+  lastActivityDate: string | null;
+  streakStartDate: string | null;
+}
+
+interface FreezeInfo {
+  id: string;
+  userId: string;
+  expiresAt: string;
+  days: number;
+  createdAt: string;
+}
 
 const { width } = Dimensions.get('window');
 
 export default function ProgressScreen() {
   const { session } = useAuth();
   const user = session?.user;
+  const [streakInfo, setStreakInfo] = useState<StreakInfo | null>(null);
+  const [freezeInfo, setFreezeInfo] = useState<FreezeInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showFreezeModal, setShowFreezeModal] = useState(false);
+  const [freezeDays, setFreezeDays] = useState('3');
 
   // Mock data - replace with real API calls
   const weeklyStats = [
@@ -83,6 +109,83 @@ export default function ProgressScreen() {
     { skill: 'Reading', level: 6, progress: 55, color: ['#EF4444', '#DC2626'] },
     { skill: 'Writing', level: 4, progress: 20, color: ['#06B6D4', '#0891B2'] },
   ];
+
+  // Fetch streak and freeze information
+  useEffect(() => {
+    const fetchStreakData = async () => {
+      try {
+        setLoading(true);
+        // Fetch streak information
+        const streakResponse = await streakApi.getStreak() as ApiResponse<{ streak: StreakInfo }>;
+        if (streakResponse.success) {
+          setStreakInfo(streakResponse.data!.streak);
+        }
+
+        // Fetch freeze information
+        const freezeResponse = await streakApi.getFreezeInfo() as ApiResponse<{ freezeInfo: FreezeInfo | null }>;
+        if (freezeResponse.success) {
+          setFreezeInfo(freezeResponse.data!.freezeInfo);
+        }
+      } catch (error) {
+        console.error('Error fetching streak data:', error);
+        Alert.alert('Error', 'Failed to load streak information');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchStreakData();
+  }, []);
+
+  // Handle streak freeze
+  const handleFreezeStreak = async () => {
+    try {
+      const days = parseInt(freezeDays);
+      if (isNaN(days) || days < 1 || days > 30) {
+        Alert.alert('Error', 'Please enter a valid number of days (1-30)');
+        return;
+      }
+
+      const response = await streakApi.freezeStreak(days) as ApiResponse<any>;
+      if (response.success) {
+        Alert.alert('Success', `Streak frozen for ${days} days`);
+        setShowFreezeModal(false);
+        setFreezeDays('3');
+        
+        // Refresh freeze info
+        const freezeResponse = await streakApi.getFreezeInfo() as ApiResponse<{ freezeInfo: FreezeInfo | null }>;
+        if (freezeResponse.success) {
+          setFreezeInfo(freezeResponse.data!.freezeInfo);
+        }
+      } else {
+        Alert.alert('Error', response.error || 'Failed to freeze streak');
+      }
+    } catch (error: any) {
+      console.error('Error freezing streak:', error);
+      Alert.alert('Error', error.message || 'Failed to freeze streak');
+    }
+  };
+
+  // Handle streak unfreeze
+  const handleUnfreezeStreak = async () => {
+    try {
+      const response = await streakApi.unfreezeStreak() as ApiResponse<any>;
+      if (response.success) {
+        Alert.alert('Success', 'Streak unfrozen successfully');
+        
+        // Refresh freeze info
+        const freezeResponse = await streakApi.getFreezeInfo() as ApiResponse<{ freezeInfo: FreezeInfo | null }>;
+        if (freezeResponse.success) {
+          setFreezeInfo(freezeResponse.data!.freezeInfo);
+        }
+      } else {
+        Alert.alert('Error', response.error || 'Failed to unfreeze streak');
+      }
+    } catch (error: any) {
+      console.error('Error unfreezing streak:', error);
+      Alert.alert('Error', error.message || 'Failed to unfreeze streak');
+    }
+  };
 
   const renderWeeklyChart = () => {
     const maxXP = Math.max(...weeklyStats.map(stat => stat.xp));
@@ -203,8 +306,25 @@ export default function ProgressScreen() {
               </View>
               <View style={styles.userStatsGrid}>
                 <View style={styles.userStatItem}>
-                  <Text style={styles.userStatValue}>7</Text>
+                  <Text style={styles.userStatValue}>
+                    {loading ? '...' : (streakInfo?.currentStreak || 0)}
+                  </Text>
                   <Text style={styles.userStatLabel}>Day Streak</Text>
+                  {freezeInfo && (
+                    <Badge variant="warning" size="small">
+                      Frozen
+                    </Badge>
+                  )}
+                  {!freezeInfo && (
+                    <TouchableOpacity onPress={() => setShowFreezeModal(true)}>
+                      <Text style={styles.freezeLink}>Freeze</Text>
+                    </TouchableOpacity>
+                  )}
+                  {freezeInfo && (
+                    <TouchableOpacity onPress={handleUnfreezeStreak}>
+                      <Text style={styles.freezeLink}>Unfreeze</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <View style={styles.userStatItem}>
                   <Text style={styles.userStatValue}>1,247</Text>
@@ -257,6 +377,53 @@ export default function ProgressScreen() {
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* Freeze Streak Modal */}
+      <Modal
+        visible={showFreezeModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowFreezeModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Freeze Your Streak</Text>
+              <TouchableOpacity onPress={() => setShowFreezeModal(false)}>
+                <Ionicons name="close" size={24} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalDescription}>
+              Protect your streak by freezing it for a specified number of days. 
+              Your streak won{`'`}t decrease during this period.
+            </Text>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Number of Days (1-30):</Text>
+              <TextInput
+                style={styles.input}
+                value={freezeDays}
+                onChangeText={setFreezeDays}
+                keyboardType="numeric"
+                placeholder="Enter days"
+              />
+            </View>
+            <View style={styles.modalButtons}>
+              <Button
+                title="Cancel"
+                variant="outline"
+                onPress={() => setShowFreezeModal(false)}
+                style={styles.modalButton}
+              />
+              <Button
+                title="Freeze Streak"
+                variant="primary"
+                onPress={handleFreezeStreak}
+                style={styles.modalButton}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -326,6 +493,7 @@ const styles = StyleSheet.create({
   },
   userStatItem: {
     alignItems: 'center',
+    gap: 4,
   },
   userStatValue: {
     fontSize: 20,
@@ -336,6 +504,11 @@ const styles = StyleSheet.create({
   userStatLabel: {
     fontSize: 12,
     color: 'rgba(255, 255, 255, 0.8)',
+  },
+  freezeLink: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    textDecorationLine: 'underline',
   },
   weeklyContent: {
     padding: 20,
@@ -461,5 +634,60 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 100,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  modalDescription: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1E293B',
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#1E293B',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  modalButton: {
+    minWidth: 100,
   },
 });

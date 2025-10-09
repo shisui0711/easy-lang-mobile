@@ -5,7 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 // Configure base URL - replace with your actual API URL
 // For mobile development, you'll need to use your machine's IP address
 // instead of localhost since localhost on mobile refers to the device itself
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.104.107.221:3000/api'; // Default to localhost for development
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.5:3000/api'; // Default to localhost for development
 
 // Add retry configuration
 const MAX_RETRY_ATTEMPTS = 3;
@@ -398,4 +398,29 @@ export const aiApi = {
     apiClient.post('/ai/health'),
   getAICapabilities: () =>
     apiClient.get('/ai/capabilities'),
+};
+
+// Streak API functions
+export const streakApi = {
+  // Get current streak information
+  getStreak: () => apiClient.get('/streak'),
+  
+  // Update streak (when completing activities)
+  updateStreak: () => apiClient.post('/streak'),
+  
+  // Freeze streak for specified days
+  freezeStreak: (days: number) => apiClient.post('/streak/freeze', { days }),
+  
+  // Unfreeze streak
+  unfreezeStreak: () => apiClient.delete('/streak/freeze'),
+  
+  // Get freeze information
+  getFreezeInfo: () => apiClient.get('/streak/freeze'),
+};
+
+// Stats API functions
+export const statsApi = {
+  // Get user statistics
+  getStats: (params?: { period?: string; includeDetails?: boolean }) => 
+    apiClient.get('/stats', { params }),
 };

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  ColorValue
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,45 +16,106 @@ import { router } from 'expo-router';
 import { Card, CardHeader, CardTitle, CardContent, Button, Badge, Progress, Avatar } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatNumber, getEncouragementMessage } from '@/lib/utils';
+import { streakApi, statsApi } from '@/lib/api';
+import { ApiResponse } from '@/types';
+
+// Define types for streak data
+interface StreakInfo {
+  currentStreak: number;
+  longestStreak: number;
+  lastActivityDate: string | null;
+  streakStartDate: string | null;
+}
+
+// Define types for stats data
+interface StatsData {
+  overview: {
+    currentStreak: number;
+    totalVocabularyCards: number;
+    userAchievements: number;
+    totalAchievements: number;
+    achievementProgress: number;
+    writingSubmissions: number;
+    averageWritingScore: number;
+  };
+  period: {
+    totalNewCards: number;
+    totalReviewCards: number;
+    totalStudyTime: number;
+    daysStudied: number;
+    goalsMet: number;
+    averageAccuracy: number;
+    averageStudyTime: number;
+  };
+}
 
 const { width } = Dimensions.get('window');
 
 export default function DashboardScreen() {
   const { session } = useAuth();
   const user = session?.user;
+  const [streakInfo, setStreakInfo] = useState<StreakInfo | null>(null);
+  const [statsData, setStatsData] = useState<StatsData | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Mock data - replace with real API calls
+  // Fetch streak information
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        // Fetch streak data
+        const streakResponse = await streakApi.getStreak() as ApiResponse<{ streak: StreakInfo }>;
+        if (streakResponse.success) {
+          setStreakInfo(streakResponse.data!.streak);
+        }
+        
+        // Fetch stats data
+        const statsResponse = await statsApi.getStats({ period: 'week' }) as ApiResponse<StatsData>;
+        if (statsResponse.success) {
+          setStatsData(statsResponse.data!);
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  // Prepare stats data for display
   const stats = [
     {
       title: "Words Learned",
-      value: "1,247",
-      change: "+23 this week",
+      value: loading ? "..." : (statsData?.period?.totalNewCards?.toString() || "0"),
+      change: `+${statsData?.period?.totalReviewCards?.toString() || "0"} this week`,
       icon: "book" as const,
-      color: ["#3B82F6", "#6366F1"],
+      color: ["#3B82F6", "#6366F1"] as [ColorValue, ColorValue],
       bgColor: "#EEF2FF"
     },
     {
       title: "Writing Score",
-      value: "8.5/10",
-      change: "+0.5 improvement",
+      value: loading ? "..." : `${statsData?.overview?.averageWritingScore?.toFixed(1) || "0"}/10`,
+      change: "Current average",
       icon: "create" as const,
-      color: ["#10B981", "#059669"],
+      color: ["#10B981", "#059669"] as [ColorValue, ColorValue],
       bgColor: "#ECFDF5"
     },
     {
       title: "Study Streak",
-      value: "7 days",
-      change: "Personal best!",
+      value: `${loading ? '...' : (streakInfo?.currentStreak || 0)} days`,
+      change: "Keep it up!",
       icon: "flame" as const,
-      color: ["#F59E0B", "#D97706"],
+      color: ["#F59E0B", "#D97706"] as [ColorValue, ColorValue],
       bgColor: "#FFFBEB"
     },
     {
       title: "Achievements",
-      value: "12/30",
-      change: "3 new unlocked",
+      value: loading ? "..." : `${statsData?.overview?.userAchievements || 0}/${statsData?.overview?.totalAchievements || 0}`,
+      change: `${statsData?.overview?.userAchievements ? statsData.overview.userAchievements : 0} unlocked`,
       icon: "trophy" as const,
-      color: ["#EF4444", "#DC2626"],
+      color: ["#EF4444", "#DC2626"] as [ColorValue, ColorValue],
       bgColor: "#FEF2F2"
     }
   ];
@@ -61,40 +123,46 @@ export default function DashboardScreen() {
   const quickActions = [
     {
       title: "Review Vocabulary",
-      description: "17 cards ready",
+      description: `${statsData?.period?.totalReviewCards || 0} cards ready`,
       icon: "book" as const,
-      gradient: ["#3B82F6", "#6366F1"],
+      gradient: ["#3B82F6", "#6366F1"] as [ColorValue, ColorValue],
       action: () => router.push('/learn'),
-      urgent: true
+      urgent: (statsData?.period?.totalReviewCards || 0) > 0
     },
     {
       title: "Practice Writing",
       description: "Continue essay",
       icon: "create" as const,
-      gradient: ["#10B981", "#059669"],
+      gradient: ["#10B981", "#059669"] as [ColorValue, ColorValue],
       action: () => router.push('/learn')
     },
     {
       title: "Speaking Practice",
       description: "Improve pronunciation",
       icon: "mic" as const,
-      gradient: ["#8B5CF6", "#7C3AED"],
+      gradient: ["#8B5CF6", "#7C3AED"] as [ColorValue, ColorValue],
       action: () => router.push('/learn')
     },
     {
       title: "View Achievements",
-      description: "3 new unlocked!",
+      description: `${statsData?.overview?.userAchievements ? statsData.overview.userAchievements : 0} unlocked!`,
       icon: "trophy" as const,
-      gradient: ["#F59E0B", "#D97706"],
+      gradient: ["#F59E0B", "#D97706"] as [ColorValue, ColorValue],
       action: () => router.push('/progress'),
-      badge: "NEW"
+      badge: (statsData?.overview?.userAchievements || 0) > 0 ? "NEW" : undefined
     }
   ];
 
   const dailyProgress = {
-    vocabulary: { current: 17, target: 20 },
-    writing: { current: 2, target: 3 },
-    overall: 85
+    vocabulary: { 
+      current: statsData?.period?.totalReviewCards || 0, 
+      target: Math.max(20, (statsData?.period?.totalReviewCards || 0) + 5) 
+    },
+    writing: { 
+      current: statsData?.overview?.writingSubmissions || 0, 
+      target: Math.max(3, (statsData?.overview?.writingSubmissions || 0) + 1) 
+    },
+    overall: Math.round(statsData?.period?.averageAccuracy || 0)
   };
 
   return (
@@ -124,7 +192,7 @@ export default function DashboardScreen() {
             </Badge>
             <Badge variant="warning" style={styles.badge}>
               <Ionicons name="flame" size={12} color="#92400E" style={{ marginRight: 4 }} />
-              {user?.streak || 7} Day Streak
+              {loading ? '...' : (streakInfo?.currentStreak || 0)} Day Streak
             </Badge>
           </View>
         </View>
@@ -243,19 +311,19 @@ export default function DashboardScreen() {
           <Card gradient gradientColors={["#3B82F6", "#8B5CF6", "#EC4899"]}>
             <CardContent style={styles.motivationCard}>
               <View style={styles.motivationContent}>
-                <Text style={styles.motivationTitle}>🔥 Amazing 7-day streak!</Text>
+                <Text style={styles.motivationTitle}>🔥 Amazing {loading ? '...' : (streakInfo?.currentStreak || 0)}-day streak!</Text>
                 <Text style={styles.motivationSubtitle}>
                   {getEncouragementMessage(dailyProgress.overall)}
                 </Text>
               </View>
               <View style={styles.motivationStats}>
                 <View style={styles.motivationStat}>
-                  <Text style={styles.motivationStatValue}>7</Text>
+                  <Text style={styles.motivationStatValue}>{loading ? '...' : (streakInfo?.currentStreak || 0)}</Text>
                   <Text style={styles.motivationStatLabel}>Days</Text>
                 </View>
                 <View style={styles.motivationStat}>
-                  <Text style={styles.motivationStatValue}>{formatNumber(user?.xp || 2450)}</Text>
-                  <Text style={styles.motivationStatLabel}>Total XP</Text>
+                  <Text style={styles.motivationStatValue}>{formatNumber(user?.xp || statsData?.overview?.totalVocabularyCards || 0)}</Text>
+                  <Text style={styles.motivationStatLabel}>Words</Text>
                 </View>
               </View>
             </CardContent>
