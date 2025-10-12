@@ -424,3 +424,54 @@ export const statsApi = {
   getStats: (params?: { period?: string; includeDetails?: boolean }) => 
     apiClient.get('/stats', { params }),
 };
+
+// Gamification API functions
+export const gamificationApi = {
+  // XP Management
+  getUserXP: (userId: string) => apiClient.get(`/gamification/xp/user/${userId}`),
+  getXPHistory: (userId: string) => apiClient.get(`/gamification/xp/history/${userId}`),
+  
+  // Level Management
+  getUserLevel: (userId: string) => apiClient.get(`/gamification/level/user/${userId}`),
+  checkLevelUp: (userId: string) => apiClient.post(`/gamification/level/check`, { userId }),
+  getLevelProgress: (userId: string) => apiClient.get(`/gamification/level/progress/${userId}`),
+  
+  // Achievement Management
+  getUserAchievements: (userId: string) => apiClient.get(`/gamification/achievements/user/${userId}`),
+  checkAchievementEligibility: (userId: string, achievementId: string) => 
+    apiClient.post(`/gamification/achievements/check`, { userId, achievementId }),
+  unlockAchievement: (userId: string, achievementId: string) => 
+    apiClient.post(`/gamification/achievements/unlock`, { userId, achievementId }),
+  getAllAchievements: () => apiClient.get('/gamification/achievements/all'),
+  
+  // Prestige Management
+  getUserPrestige: (userId: string) => apiClient.get(`/gamification/prestige/user/${userId}`),
+  checkPrestigeEligibility: (userId: string) => 
+    apiClient.post(`/gamification/prestige/check`, { userId }),
+  performPrestige: (userId: string) => 
+    apiClient.post(`/gamification/prestige/perform`, { userId }),
+};
+
+// Social API functions
+export const socialApi = {
+  // Leaderboard
+  getGlobalLeaderboard: (limit: number = 20) => 
+    apiClient.get('/social/leaderboards/global', { params: { limit } }),
+  getCategoryLeaderboard: (category: string, limit: number = 20) => 
+    apiClient.get(`/social/leaderboards/category/${category}`, { params: { limit } }),
+  getTimeLeaderboard: (period: string, limit: number = 20) => 
+    apiClient.get(`/social/leaderboards/time/${period}`, { params: { limit } }),
+  getFriendsLeaderboard: (userId: string, limit: number = 20) => 
+    apiClient.get(`/social/leaderboards/friends/${userId}`, { params: { limit } }),
+  getUserRank: (userId: string) => 
+    apiClient.get(`/social/leaderboards/user-rank/${userId}`),
+    
+  // User Profiles
+  getUserProfile: (userId: string) => apiClient.get(`/social/profile/${userId}`),
+  updateUserProfile: (userId: string, data: any) => 
+    apiClient.put(`/social/profile/${userId}`, data),
+  getUserAchievements: (userId: string) => 
+    apiClient.get(`/social/profile/achievements/${userId}`),
+  getUserStats: (userId: string) => 
+    apiClient.get(`/social/profile/stats/${userId}`),
+};

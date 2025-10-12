@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { Link } from 'expo-router';
 
 import { Card, CardContent, Button, Avatar, Badge } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,6 +26,7 @@ export default function ProfileScreen() {
     { label: 'Level', value: user?.level || 5, icon: 'star' as const },
     { label: 'Streak', value: user?.streak || 7, icon: 'flame' as const },
     { label: 'Words Learned', value: 1247, icon: 'book' as const },
+    { label: 'Prestige', value: user?.prestige || 0, icon: 'diamond' as const },
   ];
 
   const menuItems = [
@@ -38,13 +40,33 @@ export default function ProfileScreen() {
       icon: 'trophy' as const,
       title: 'Achievements',
       subtitle: 'View all achievements',
-      onPress: () => {},
+      onPress: () => {
+        router.push('/achievements');
+      },
     },
     {
       icon: 'bar-chart' as const,
       title: 'Statistics',
       subtitle: 'Detailed learning stats',
-      onPress: () => {},
+      onPress: () => {
+        router.push('/level-progress');
+      },
+    },
+    {
+      icon: 'diamond' as const,
+      title: 'Prestige',
+      subtitle: 'Prestige system and benefits',
+      onPress: () => {
+        router.push('/prestige');
+      },
+    },
+    {
+      icon: 'podium' as const,
+      title: 'Leaderboard',
+      subtitle: 'See how you rank',
+      onPress: () => {
+        router.push('/leaderboard');
+      },
     },
     {
       icon: 'help-circle' as const,
@@ -136,24 +158,6 @@ export default function ProfileScreen() {
               </Text>
             </CardContent>
           </Card>
-        </View>
-
-        {/* Stats Grid */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Statistics</Text>
-          <View style={styles.statsGrid}>
-            {profileStats.map((stat, index) => (
-              <Card key={index} style={styles.statCard}>
-                <CardContent style={styles.statContent}>
-                  <View style={styles.statIconContainer}>
-                    <Ionicons name={stat.icon} size={24} color="#3B82F6" />
-                  </View>
-                  <Text style={styles.statValue}>{stat.value.toLocaleString()}</Text>
-                  <Text style={styles.statLabel}>{stat.label}</Text>
-                </CardContent>
-              </Card>
-            ))}
-          </View>
         </View>
 
         {/* Menu Items */}

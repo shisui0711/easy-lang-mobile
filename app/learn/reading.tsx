@@ -133,7 +133,9 @@ export default function ReadingScreen() {
   const fetchSubmissions = async () => {
     try {
       const response = await apiClient.get<PaginationResponse<ReadingSubmission>>('/reading/submissions');
-      if (response.success && response.data) {
+      // The API returns data directly in the format: { data: [...], pagination: {...} }
+      if (response && response.data) {
+        console.log('Submissions:', response.data.data)
         setSubmissions(response.data.data || []);
       }
     } catch (error) {
@@ -168,8 +170,9 @@ export default function ReadingScreen() {
     const feedback: QuestionFeedback[] = [];
 
     for (const [index, question] of questions.entries()) {
-      const questionId = question.id;
-      const userAnswer = userAnswers[questionId] || '';
+      // Use the same key format as in the question components (q0, q1, etc.)
+      const questionKey = `q${index}`;
+      const userAnswer = userAnswers[questionKey] || '';
       const correctAnswer = question.correctAnswer;
       const points = question.points || 1;
       maxScore += points;
@@ -212,7 +215,7 @@ export default function ReadingScreen() {
       }
 
       feedback.push({
-        questionId,
+        questionId: questionKey, // Use the same key format
         isCorrect,
         correctAnswer: normalizedCorrectAnswer,
         explanation: question.explanation,
@@ -233,7 +236,8 @@ export default function ReadingScreen() {
   const submitAnswers = async () => {
     if (!selectedExercise || !startTime) return;
 
-    const totalQuestions = (selectedExercise.comprehensionQuestions || selectedExercise.questions)?.length || 0;
+    const questions = selectedExercise.comprehensionQuestions || selectedExercise.questions || [];
+    const totalQuestions = questions.length;
     const answeredQuestions = Object.keys(answers).length;
 
     if (answeredQuestions !== totalQuestions) {
@@ -258,21 +262,11 @@ export default function ReadingScreen() {
       });
 
       if (response.success) {
-        Alert.alert(
-          'Success!',
-          'Your answers have been submitted.',
-          [
-            { text: 'Read Another', onPress: () => setActiveTab('practice') },
-            { text: 'View Results', onPress: () => setActiveTab('progress') }
-          ]
-        );
-        setSelectedExercise(null);
-        setAnswers({});
-        setStartTime(null);
-        setReadingStarted(false);
-        setShowResults(false);
-        setGradingResult(null);
-        fetchSubmissions();
+        // Just show a simple success message without navigating away
+        Alert.alert('Success!', 'Your answers have been submitted.');
+        // Don't navigate away - let the user view their results
+        // Don't clear the exercise or results state
+        fetchSubmissions(); // Refresh submissions for progress tab
       } else {
         Alert.alert('Error', response.error || 'Failed to submit answers');
       }
@@ -389,6 +383,48 @@ export default function ReadingScreen() {
               
               <View style={styles.filterRow}>
                 <TouchableOpacity 
+                  key="grammar"
+                  style={[styles.filterButton, selectedType === 'GRAMMAR' && styles.activeFilterButton]}
+                  onPress={() => setSelectedType('GRAMMAR')}
+                >
+                  <Text style={[styles.filterButtonText, selectedType === 'GRAMMAR' && styles.activeFilterButtonText]}>
+                    Grammar
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  key="ielts"
+                  style={[styles.filterButton, selectedType === 'IELTS_READING' && styles.activeFilterButton]}
+                  onPress={() => setSelectedType('IELTS_READING')}
+                >
+                  <Text style={[styles.filterButtonText, selectedType === 'IELTS_READING' && styles.activeFilterButtonText]}>
+                    IELTS Reading
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  key="speed"
+                  style={[styles.filterButton, selectedType === 'SPEED_READING' && styles.activeFilterButton]}
+                  onPress={() => setSelectedType('SPEED_READING')}
+                >
+                  <Text style={[styles.filterButtonText, selectedType === 'SPEED_READING' && styles.activeFilterButtonText]}>
+                    Speed Reading
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.filterRow}>
+                <TouchableOpacity 
+                  key="critical"
+                  style={[styles.filterButton, selectedType === 'CRITICAL_THINKING' && styles.activeFilterButton]}
+                  onPress={() => setSelectedType('CRITICAL_THINKING')}
+                >
+                  <Text style={[styles.filterButtonText, selectedType === 'CRITICAL_THINKING' && styles.activeFilterButtonText]}>
+                    Critical Thinking
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.filterRow}>
+                <TouchableOpacity 
                   key="all-levels"
                   style={[styles.filterButton, selectedLevel === 'all' && styles.activeFilterButton]}
                   onPress={() => setSelectedLevel('all')}
@@ -413,6 +449,27 @@ export default function ReadingScreen() {
                 >
                   <Text style={[styles.filterButtonText, selectedLevel === 'Intermediate' && styles.activeFilterButtonText]}>
                     Intermediate
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.filterRow}>
+                <TouchableOpacity 
+                  key="advanced"
+                  style={[styles.filterButton, selectedLevel === 'Advanced' && styles.activeFilterButton]}
+                  onPress={() => setSelectedLevel('Advanced')}
+                >
+                  <Text style={[styles.filterButtonText, selectedLevel === 'Advanced' && styles.activeFilterButtonText]}>
+                    Advanced
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  key="expert"
+                  style={[styles.filterButton, selectedLevel === 'Expert' && styles.activeFilterButton]}
+                  onPress={() => setSelectedLevel('Expert')}
+                >
+                  <Text style={[styles.filterButtonText, selectedLevel === 'Expert' && styles.activeFilterButtonText]}>
+                    Expert
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -443,12 +500,15 @@ export default function ReadingScreen() {
                       <Badge style={styles.levelBadge}>
                         <Text style={styles.levelBadgeText}>{exercise.level}</Text>
                       </Badge>
-                      <Text style={styles.typeText}>{exercise.type}</Text>
+                      <Text style={styles.typeText}>{exercise.type.replace('_', ' ')}</Text>
                     </View>
                     <Text style={styles.exerciseTitle}>{exercise.title}</Text>
                     {exercise.topic && (
-                      <Text style={styles.topicText}>{exercise.topic.name}</Text>
+                      <Text style={styles.topicText}>{exercise.topic.name} • {exercise.level}</Text>
                     )}
+                    <Text style={styles.exerciseContentPreview}>
+                      {exercise.content.substring(0, 100)}...
+                    </Text>
                     <View style={styles.exerciseDetails}>
                       {exercise.wordCount && (
                         <View key="word-count" style={styles.detailItem}>
@@ -538,10 +598,12 @@ export default function ReadingScreen() {
                   
                   <Text style={styles.questionReviewTitle}>Question Review</Text>
                   {(selectedExercise.comprehensionQuestions || selectedExercise.questions)?.map((question, index) => {
-                    const feedbackItem = gradingResult.feedback.find(f => f.questionId === question.id);
+                    // Use the same key format as in the grading function (q0, q1, etc.)
+                    const questionKey = `q${index}`;
+                    const feedbackItem = gradingResult.feedback.find(f => f.questionId === questionKey);
                     return (
                       <Card 
-                        key={question.id} 
+                        key={questionKey} 
                         style={
                           feedbackItem?.isCorrect 
                             ? {
@@ -616,6 +678,7 @@ export default function ReadingScreen() {
                         setShowResults(false);
                         setSelectedExercise(null);
                         setGradingResult(null);
+                        setActiveTab('practice'); // Navigate back to practice tab
                       }}
                       style={styles.chooseExerciseButton}
                     />
@@ -1007,7 +1070,13 @@ const styles = StyleSheet.create({
   topicText: {
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.9)',
+    marginBottom: 8,
+  },
+  exerciseContentPreview: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
     marginBottom: 16,
+    lineHeight: 20,
   },
   exerciseDetails: {
     flexDirection: 'row',

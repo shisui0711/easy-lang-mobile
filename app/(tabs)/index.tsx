@@ -49,6 +49,17 @@ interface StatsData {
   };
 }
 
+// Define types for quick actions
+interface QuickAction {
+  title: string;
+  description: string;
+  icon: "book" | "create" | "mic" | "trophy" | "flame" | "stats-chart" | "podium" | "diamond";
+  gradient: [ColorValue, ColorValue];
+  action: () => void;
+  urgent?: boolean;
+  badge?: string;
+}
+
 const { width } = Dimensions.get('window');
 
 export default function DashboardScreen() {
@@ -120,36 +131,74 @@ export default function DashboardScreen() {
     }
   ];
 
-  const quickActions = [
+  const quickActions: QuickAction[] = [
     {
       title: "Review Vocabulary",
       description: `${statsData?.period?.totalReviewCards || 0} cards ready`,
-      icon: "book" as const,
-      gradient: ["#3B82F6", "#6366F1"] as [ColorValue, ColorValue],
+      icon: "book",
+      gradient: ["#3B82F6", "#6366F1"],
       action: () => router.push('/learn'),
       urgent: (statsData?.period?.totalReviewCards || 0) > 0
     },
     {
       title: "Practice Writing",
       description: "Continue essay",
-      icon: "create" as const,
-      gradient: ["#10B981", "#059669"] as [ColorValue, ColorValue],
+      icon: "create",
+      gradient: ["#10B981", "#059669"],
       action: () => router.push('/learn')
     },
     {
       title: "Speaking Practice",
       description: "Improve pronunciation",
-      icon: "mic" as const,
-      gradient: ["#8B5CF6", "#7C3AED"] as [ColorValue, ColorValue],
+      icon: "mic",
+      gradient: ["#8B5CF6", "#7C3AED"],
       action: () => router.push('/learn')
     },
     {
-      title: "View Achievements",
-      description: `${statsData?.overview?.userAchievements ? statsData.overview.userAchievements : 0} unlocked!`,
-      icon: "trophy" as const,
-      gradient: ["#F59E0B", "#D97706"] as [ColorValue, ColorValue],
-      action: () => router.push('/progress'),
-      badge: (statsData?.overview?.userAchievements || 0) > 0 ? "NEW" : undefined
+      title: "Streak Dashboard",
+      description: "View your streak progress",
+      icon: "flame",
+      gradient: ["#F59E0B", "#D97706"],
+      action: () => router.push('/streak')
+    }
+  ];
+
+  // Menu items for navigation to progress-related screens
+  const progressMenuItems: QuickAction[] = [
+    {
+      title: "Level Progress",
+      description: "Track your XP and level",
+      icon: "stats-chart",
+      gradient: ["#3B82F6", "#6366F1"],
+      action: () => router.push('/level-progress')
+    },
+    {
+      title: "Achievements",
+      description: "View earned badges",
+      icon: "trophy",
+      gradient: ["#F59E0B", "#D97706"],
+      action: () => router.push('/achievements')
+    },
+    {
+      title: "Streak Dashboard",
+      description: "View your streak progress",
+      icon: "flame",
+      gradient: ["#F59E0B", "#D97706"],
+      action: () => router.push('/streak')
+    },
+    {
+      title: "Leaderboard",
+      description: "See how you rank",
+      icon: "podium",
+      gradient: ["#8B5CF6", "#7C3AED"],
+      action: () => router.push('/leaderboard')
+    },
+    {
+      title: "Prestige",
+      description: "Reach new heights",
+      icon: "diamond",
+      gradient: ["#EC4899", "#DB2777"],
+      action: () => router.push('/prestige')
     }
   ];
 
@@ -254,13 +303,40 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* Progress Menu */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Progress Tracking</Text>
+          <Text style={styles.sectionSubtitle}>View your achievements and rankings</Text>
+          
+          <View style={styles.quickActionsGrid}>
+            {progressMenuItems.map((item, index) => (
+              <TouchableOpacity key={index} onPress={item.action} style={styles.quickActionCard}>
+                <LinearGradient
+                  colors={item.gradient}
+                  style={styles.quickActionGradient}
+                >
+                  <View style={styles.quickActionHeader}>
+                    <Ionicons name={item.icon} size={24} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.quickActionTitle}>{item.title}</Text>
+                  <Text style={styles.quickActionDescription}>{item.description}</Text>
+                  <View style={styles.quickActionFooter}>
+                    <Text style={styles.quickActionCTA}>View details</Text>
+                    <Ionicons name="arrow-forward" size={16} color="rgba(255, 255, 255, 0.9)" />
+                  </View>
+                </LinearGradient>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
         {/* Today's Progress */}
         <View style={styles.section}>
           <Card>
             <CardHeader>
               <CardTitle>
                 <Ionicons name="analytics" size={20} color="#10B981" style={{ marginRight: 8 }} />
-                Todays Progress
+                Today&apos;s Progress
               </CardTitle>
             </CardHeader>
             <CardContent>

@@ -21,6 +21,7 @@ interface VocabularyCard {
   difficulty: 'beginner' | 'intermediate' | 'advanced';
   state: string;
   due: string;
+  text: string;
   word: {
     id: string;
     text: string;
@@ -279,7 +280,7 @@ export const PracticeSection = () => {
               style={styles.vocabularyCardItem}
               onPress={() => generateQuestions(item)}
             >
-              <Text style={styles.vocabularyCardText}>{item.word.text}</Text>
+              <Text style={styles.vocabularyCardText}>{item.text}</Text>
             </TouchableOpacity>
           )}
         />

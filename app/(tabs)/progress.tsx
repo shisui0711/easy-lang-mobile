@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Card, CardHeader, CardTitle, CardContent, Badge, Progress, Avatar, Button } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatNumber, getAchievementColor } from '@/lib/utils';
-import { streakApi } from '@/lib/api';
+import { streakApi, statsApi } from '@/lib/api';
 import { ApiResponse } from '@/types';
 
 // Define types for streak data
@@ -36,6 +36,53 @@ interface FreezeInfo {
   createdAt: string;
 }
 
+// Define types for stats data
+interface TodayStats {
+  new_cards: number;
+  review_cards: number;
+  relearn_cards: number;
+  correct_reviews: number;
+  total_reviews: number;
+  accuracy_rate: number;
+  study_time: number;
+  daily_goal_met: boolean;
+}
+
+interface PeriodStats {
+  type: string;
+  startDate: string;
+  endDate: string;
+  totalNewCards: number;
+  totalReviewCards: number;
+  totalRelearningCards: number;
+  totalCorrectReviews: number;
+  totalReviews: number;
+  totalStudyTime: number;
+  daysStudied: number;
+  goalsMet: number;
+  averageAccuracy: number;
+  averageStudyTime: number;
+}
+
+interface OverviewStats {
+  currentStreak: number;
+  totalVocabularyCards: number;
+  dueCardsCount: number;
+  userAchievements: number;
+  totalAchievements: number;
+  achievementProgress: number;
+  writingSubmissions: number;
+  averageWritingScore: number;
+  vocabularyByState: Record<string, number>;
+}
+
+interface StatsData {
+  today: TodayStats;
+  period: PeriodStats;
+  overview: OverviewStats;
+  dailyBreakdown?: any[];
+}
+
 const { width } = Dimensions.get('window');
 
 export default function ProgressScreen() {
@@ -43,76 +90,14 @@ export default function ProgressScreen() {
   const user = session?.user;
   const [streakInfo, setStreakInfo] = useState<StreakInfo | null>(null);
   const [freezeInfo, setFreezeInfo] = useState<FreezeInfo | null>(null);
+  const [statsData, setStatsData] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFreezeModal, setShowFreezeModal] = useState(false);
   const [freezeDays, setFreezeDays] = useState('3');
 
-  // Mock data - replace with real API calls
-  const weeklyStats = [
-    { day: 'Mon', xp: 120, completed: true },
-    { day: 'Tue', xp: 85, completed: true },
-    { day: 'Wed', xp: 150, completed: true },
-    { day: 'Thu', xp: 95, completed: true },
-    { day: 'Fri', xp: 110, completed: true },
-    { day: 'Sat', xp: 75, completed: true },
-    { day: 'Sun', xp: 0, completed: false },
-  ];
-
-  const achievements = [
-    {
-      id: '1',
-      name: 'Word Master',
-      description: 'Learned 1000 words',
-      icon: 'book',
-      rarity: 'epic',
-      unlocked: true,
-      progress: 100,
-      maxProgress: 100,
-    },
-    {
-      id: '2',
-      name: 'Perfect Week',
-      description: '7 day study streak',
-      icon: 'flame',
-      rarity: 'rare',
-      unlocked: true,
-      progress: 100,
-      maxProgress: 100,
-    },
-    {
-      id: '3',
-      name: 'Writing Expert',
-      description: 'Complete 50 writing exercises',
-      icon: 'create',
-      rarity: 'rare',
-      unlocked: false,
-      progress: 32,
-      maxProgress: 50,
-    },
-    {
-      id: '4',
-      name: 'Speed Reader',
-      description: 'Read 100 articles',
-      icon: 'eye',
-      rarity: 'common',
-      unlocked: false,
-      progress: 67,
-      maxProgress: 100,
-    },
-  ];
-
-  const skillLevels = [
-    { skill: 'Vocabulary', level: 8, progress: 75, color: ['#3B82F6', '#6366F1'] },
-    { skill: 'Grammar', level: 6, progress: 45, color: ['#10B981', '#059669'] },
-    { skill: 'Speaking', level: 7, progress: 60, color: ['#8B5CF6', '#7C3AED'] },
-    { skill: 'Listening', level: 5, progress: 30, color: ['#F59E0B', '#D97706'] },
-    { skill: 'Reading', level: 6, progress: 55, color: ['#EF4444', '#DC2626'] },
-    { skill: 'Writing', level: 4, progress: 20, color: ['#06B6D4', '#0891B2'] },
-  ];
-
   // Fetch streak and freeze information
   useEffect(() => {
-    const fetchStreakData = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
         // Fetch streak information
@@ -126,15 +111,21 @@ export default function ProgressScreen() {
         if (freezeResponse.success) {
           setFreezeInfo(freezeResponse.data!.freezeInfo);
         }
+        
+        // Fetch stats data
+        const statsResponse = await statsApi.getStats({ period: 'week', includeDetails: true }) as ApiResponse<StatsData>;
+        if (statsResponse.success) {
+          setStatsData(statsResponse.data!);
+        }
       } catch (error) {
-        console.error('Error fetching streak data:', error);
-        Alert.alert('Error', 'Failed to load streak information');
+        console.error('Error fetching data:', error);
+        Alert.alert('Error', 'Failed to load information');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchStreakData();
+    fetchData();
   }, []);
 
   // Handle streak freeze
@@ -188,11 +179,20 @@ export default function ProgressScreen() {
   };
 
   const renderWeeklyChart = () => {
-    const maxXP = Math.max(...weeklyStats.map(stat => stat.xp));
+    if (!statsData?.dailyBreakdown) return null;
+    
+    // Transform daily breakdown data for chart
+    const weeklyStats = statsData.dailyBreakdown.map((day: any) => ({
+      day: new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' }),
+      xp: day.study_time, // Using study time as XP for visualization
+      completed: day.total_reviews > 0
+    }));
+    
+    const maxXP = Math.max(...weeklyStats.map((stat: any) => stat.xp), 1);
     
     return (
       <View style={styles.chartContainer}>
-        {weeklyStats.map((stat, index) => (
+        {weeklyStats.map((stat: any, index: number) => (
           <View key={index} style={styles.chartItem}>
             <View style={styles.chartBar}>
               <View
@@ -209,6 +209,48 @@ export default function ProgressScreen() {
             <Text style={styles.chartXP}>{stat.xp}</Text>
           </View>
         ))}
+      </View>
+    );
+  };
+
+  // Add a new function to render a streak calendar
+  const renderStreakCalendar = () => {
+    // Mock data for demonstration - in real implementation, this would come from the API
+    const calendarData = [
+      { date: '2023-06-01', status: 'completed' },
+      { date: '2023-06-02', status: 'completed' },
+      { date: '2023-06-03', status: 'missed' },
+      { date: '2023-06-04', status: 'completed' },
+      { date: '2023-06-05', status: 'completed' },
+      { date: '2023-06-06', status: 'completed' },
+      { date: '2023-06-07', status: 'current' },
+    ];
+    
+    return (
+      <View style={styles.calendarContainer}>
+        <Text style={styles.calendarTitle}>Streak Calendar</Text>
+        <View style={styles.calendarGrid}>
+          {calendarData.map((day, index) => (
+            <View 
+              key={index} 
+              style={[
+                styles.calendarDay,
+                day.status === 'completed' && styles.completedDay,
+                day.status === 'missed' && styles.missedDay,
+                day.status === 'current' && styles.currentDay,
+              ]}
+            >
+              <Text style={[
+                styles.calendarDayText,
+                day.status === 'completed' && styles.completedDayText,
+                day.status === 'missed' && styles.missedDayText,
+                day.status === 'current' && styles.currentDayText,
+              ]}>
+                {new Date(day.date).getDate()}
+              </Text>
+            </View>
+          ))}
+        </View>
       </View>
     );
   };
@@ -274,6 +316,60 @@ export default function ProgressScreen() {
     </View>
   );
 
+  // Mock data - achievements (would be replaced with real API in future)
+  const achievements = [
+    {
+      id: '1',
+      name: 'Word Master',
+      description: 'Learned 1000 words',
+      icon: 'book',
+      rarity: 'epic',
+      unlocked: true,
+      progress: 100,
+      maxProgress: 100,
+    },
+    {
+      id: '2',
+      name: 'Perfect Week',
+      description: '7 day study streak',
+      icon: 'flame',
+      rarity: 'rare',
+      unlocked: true,
+      progress: 100,
+      maxProgress: 100,
+    },
+    {
+      id: '3',
+      name: 'Writing Expert',
+      description: 'Complete 50 writing exercises',
+      icon: 'create',
+      rarity: 'rare',
+      unlocked: false,
+      progress: 32,
+      maxProgress: 50,
+    },
+    {
+      id: '4',
+      name: 'Speed Reader',
+      description: 'Read 100 articles',
+      icon: 'eye',
+      rarity: 'common',
+      unlocked: false,
+      progress: 67,
+      maxProgress: 100,
+    },
+  ];
+
+  // Mock data - skill levels (would be replaced with real API in future)
+  const skillLevels = [
+    { skill: 'Vocabulary', level: 8, progress: 75, color: ['#3B82F6', '#6366F1'] },
+    { skill: 'Grammar', level: 6, progress: 45, color: ['#10B981', '#059669'] },
+    { skill: 'Speaking', level: 7, progress: 60, color: ['#8B5CF6', '#7C3AED'] },
+    { skill: 'Listening', level: 5, progress: 30, color: ['#F59E0B', '#D97706'] },
+    { skill: 'Reading', level: 6, progress: 55, color: ['#EF4444', '#DC2626'] },
+    { skill: 'Writing', level: 4, progress: 20, color: ['#06B6D4', '#0891B2'] },
+  ];
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -327,14 +423,27 @@ export default function ProgressScreen() {
                   )}
                 </View>
                 <View style={styles.userStatItem}>
-                  <Text style={styles.userStatValue}>1,247</Text>
+                  <Text style={styles.userStatValue}>
+                    {loading ? '...' : (statsData?.overview?.totalVocabularyCards || 0)}
+                  </Text>
                   <Text style={styles.userStatLabel}>Words Learned</Text>
                 </View>
                 <View style={styles.userStatItem}>
-                  <Text style={styles.userStatValue}>85%</Text>
+                  <Text style={styles.userStatValue}>
+                    {loading ? '...' : `${Math.round((statsData?.period?.goalsMet || 0) / 7 * 100)}%`}
+                  </Text>
                   <Text style={styles.userStatLabel}>Weekly Goal</Text>
                 </View>
               </View>
+            </CardContent>
+          </Card>
+        </View>
+
+        {/* Streak Calendar */}
+        <View style={styles.section}>
+          <Card>
+            <CardContent style={styles.calendarContent}>
+              {renderStreakCalendar()}
             </CardContent>
           </Card>
         </View>
@@ -346,7 +455,7 @@ export default function ProgressScreen() {
             <CardContent style={styles.weeklyContent}>
               {renderWeeklyChart()}
               <Text style={styles.weeklyTotal}>
-                Total this week: {weeklyStats.reduce((sum, stat) => sum + stat.xp, 0)} XP
+                Total this week: {loading ? '...' : (statsData?.period?.totalStudyTime || 0)} minutes
               </Text>
             </CardContent>
           </Card>
@@ -373,6 +482,71 @@ export default function ProgressScreen() {
           <View style={styles.achievementsList}>
             {achievements.map(renderAchievement)}
           </View>
+        </View>
+
+        {/* Leaderboard */}
+        <View style={styles.section}>
+          <View style={styles.leaderboardHeader}>
+            <Text style={styles.sectionTitle}>Leaderboard</Text>
+            <TouchableOpacity 
+              style={styles.seeAllButton}
+              onPress={() => {
+                // TODO: Navigate to full leaderboard screen
+                Alert.alert('Feature coming soon', 'Full leaderboard will be available in the next update');
+              }}
+            >
+              <Text style={styles.seeAllText}>See All</Text>
+              <Ionicons name="chevron-forward" size={16} color="#3B82F6" />
+            </TouchableOpacity>
+          </View>
+          <Card>
+            <CardContent style={styles.leaderboardContent}>
+              <View style={styles.leaderboardItem}>
+                <View style={styles.leaderboardPosition}>
+                  <Text style={styles.positionText}>1</Text>
+                </View>
+                <Avatar size="small" firstName="Alex" style={styles.leaderboardAvatar} />
+                <View style={styles.leaderboardUserInfo}>
+                  <Text style={styles.leaderboardUsername}>AlexJohnson</Text>
+                  <Text style={styles.leaderboardStats}>Level 25 • 12,540 XP</Text>
+                </View>
+                <Badge variant="warning" style={styles.streakBadge}>
+                  <Ionicons name="flame" size={12} color="#92400E" style={{ marginRight: 4 }} />
+                  <Text style={styles.streakText}>32</Text>
+                </Badge>
+              </View>
+              
+              <View style={[styles.leaderboardItem, styles.leaderboardItemBorder]}>
+                <View style={styles.leaderboardPosition}>
+                  <Text style={styles.positionText}>2</Text>
+                </View>
+                <Avatar size="small" firstName="Sam" style={styles.leaderboardAvatar} />
+                <View style={styles.leaderboardUserInfo}>
+                  <Text style={styles.leaderboardUsername}>SamWilson</Text>
+                  <Text style={styles.leaderboardStats}>Level 23 • 11,200 XP</Text>
+                </View>
+                <Badge variant="warning" style={styles.streakBadge}>
+                  <Ionicons name="flame" size={12} color="#92400E" style={{ marginRight: 4 }} />
+                  <Text style={styles.streakText}>18</Text>
+                </Badge>
+              </View>
+              
+              <View style={[styles.leaderboardItem, styles.leaderboardItemBorder]}>
+                <View style={styles.leaderboardPosition}>
+                  <Text style={[styles.positionText, styles.currentUserPosition]}>3</Text>
+                </View>
+                <Avatar size="small" firstName="You" style={styles.leaderboardAvatar} />
+                <View style={styles.leaderboardUserInfo}>
+                  <Text style={[styles.leaderboardUsername, styles.currentUsername]}>You</Text>
+                  <Text style={styles.leaderboardStats}>Level 20 • 9,800 XP</Text>
+                </View>
+                <Badge variant="warning" style={styles.streakBadge}>
+                  <Ionicons name="flame" size={12} color="#92400E" style={{ marginRight: 4 }} />
+                  <Text style={styles.streakText}>7</Text>
+                </Badge>
+              </View>
+            </CardContent>
+          </Card>
         </View>
 
         <View style={styles.bottomSpacer} />
@@ -635,6 +809,122 @@ const styles = StyleSheet.create({
   bottomSpacer: {
     height: 100,
   },
+  calendarContent: {
+    padding: 20,
+  },
+  calendarContainer: {
+    marginBottom: 20,
+  },
+  calendarTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 16,
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  calendarDay: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  completedDay: {
+    backgroundColor: '#10B981',
+  },
+  missedDay: {
+    backgroundColor: '#EF4444',
+  },
+  currentDay: {
+    backgroundColor: '#3B82F6',
+  },
+  calendarDayText: {
+    fontSize: 14,
+    color: '#64748B',
+  },
+  completedDayText: {
+    color: '#FFFFFF',
+  },
+  missedDayText: {
+    color: '#FFFFFF',
+  },
+  currentDayText: {
+    color: '#FFFFFF',
+  },
+  leaderboardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  seeAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  seeAllText: {
+    fontSize: 14,
+    color: '#3B82F6',
+    fontWeight: '500',
+  },
+  leaderboardContent: {
+    padding: 0,
+  },
+  leaderboardItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  leaderboardItemBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  leaderboardPosition: {
+    width: 24,
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  positionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  currentUserPosition: {
+    color: '#3B82F6',
+  },
+  leaderboardAvatar: {
+    marginRight: 12,
+  },
+  leaderboardUserInfo: {
+    flex: 1,
+  },
+  leaderboardUsername: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  currentUsername: {
+    color: '#3B82F6',
+  },
+  leaderboardStats: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  streakBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  streakText: {
+    fontSize: 12,
+    color: '#92400E',
+    fontWeight: '500',
+  },
+
   modalContainer: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

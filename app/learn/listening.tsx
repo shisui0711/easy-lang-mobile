@@ -113,8 +113,8 @@ export default function ListeningScreen() {
     setIsLoading(true);
     try {
       const params: any = {
-        type: selectedType === 'all' ? 'CONVERSATION' : selectedType,
-        level: selectedLevel === 'all' ? 'Beginner' : selectedLevel,
+        ...(selectedType !== 'all' && { type: selectedType }),
+        ...(selectedLevel !== 'all' && { level: selectedLevel }),
         pageSize: 20,
       };
       
@@ -364,21 +364,23 @@ export default function ListeningScreen() {
       )
       
       if (response.success) {
-        // Don't show alert if we're showing results
-        // Alert.alert('Success', 'Answers submitted successfully!')
-        setSelectedExercise(null)
+        // Show success message
+        Alert.alert('Success', 'Answers submitted successfully! Review your results below.');
+        // Keep the exercise displayed to show results
+        // Only clear the answers and transcription, but don't reset the exercise
         setAnswers({})
         setTranscription('')
         setStartTime(null)
-        setShowResults(false)
-        setGradingResult(null)
         fetchSubmissions()
+        // Results are already visible, no need to set them again
       } else {
         Alert.alert('Error', 'Failed to submit answers')
+        // Keep results visible but show error
       }
     } catch (error) {
       console.error('Failed to submit answers:', error)
       Alert.alert('Error', 'Failed to submit answers')
+      // Keep results visible but show error
     } finally {
       setIsSubmitting(false)
     }
@@ -653,6 +655,9 @@ export default function ListeningScreen() {
                           style={styles.chooseExerciseButton}
                         />
                       </View>
+                      <Text style={styles.resultsFooterNote}>
+                        Review your results above. Click &quot;Choose Different Exercise&quot; to select another exercise.
+                      </Text>
                     </CardContent>
                   </Card>
                 )}
@@ -1590,6 +1595,12 @@ const styles = StyleSheet.create({
   chooseExerciseButton: {
     flex: 1,
     marginLeft: 8,
+  },
+  resultsFooterNote: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 16,
   },
 });
 
