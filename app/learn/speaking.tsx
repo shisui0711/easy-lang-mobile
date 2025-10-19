@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
@@ -16,6 +17,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { Card, CardContent, Button } from '@/components/ui';
 import { learningApi } from '@/lib/api';
 import { ApiResponse } from '@/types';
+
+// Import expo-speech-recognition
+import {
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from 'expo-speech-recognition';
+import type { ExpoSpeechRecognitionResultEvent, ExpoSpeechRecognitionErrorEvent } from 'expo-speech-recognition';
 
 interface SpeakingExercise {
   id: string;
@@ -67,6 +75,7 @@ export default function SpeakingScreen() {
   const [recordingInterval, setRecordingInterval] = useState<NodeJS.Timeout | null>(null);
   // Speech recognition states
   const [isRecognizing, setIsRecognizing] = useState(false);
+  const [recognizedText, setRecognizedText] = useState('');
   const [passageWords, setPassageWords] = useState<string[]>([]);
   const [recognizedWords, setRecognizedWords] = useState<string[]>([]);
   const [highlightedWords, setHighlightedWords] = useState<Set<number>>(new Set());
@@ -141,6 +150,32 @@ export default function SpeakingScreen() {
     }
   };
 
+  // Setup speech recognition event listeners
+  useSpeechRecognitionEvent('start', () => {
+    setIsRecognizing(true);
+    setRecognitionError(null);
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    setIsRecognizing(false);
+  });
+
+  useSpeechRecognitionEvent('result', (event: ExpoSpeechRecognitionResultEvent) => {
+    const transcript = event.results[0]?.transcript || '';
+    setRecognizedText(transcript);
+    
+    // Process the recognized text for word highlighting
+    if (selectedExercise?.passage) {
+      processRecognizedText(transcript);
+    }
+  });
+
+  useSpeechRecognitionEvent('error', (event: ExpoSpeechRecognitionErrorEvent) => {
+    console.error('Speech recognition error:', event);
+    setRecognitionError(`Speech recognition error: ${event.message || event.error}`);
+    setIsRecognizing(false);
+  });
+
   // Initialize speech recognition when selected exercise changes
   useEffect(() => {
     if (selectedExercise && selectedExercise.passage) {
@@ -151,13 +186,14 @@ export default function SpeakingScreen() {
       setCurrentWordIndex(0);
       setRecognizedWords([]);
       setIsExerciseComplete(false);
+      setRecognizedText('');
     }
     
     // Cleanup function to stop recognition when exercise changes
     return () => {
-      if (recognitionRef.current && isRecognizing) {
+      if (isRecognizing) {
         try {
-          // Stop recognition if needed
+          ExpoSpeechRecognitionModule.stop();
         } catch (error) {
           console.error('Error stopping recognition on cleanup:', error);
         }
@@ -185,65 +221,74 @@ export default function SpeakingScreen() {
     setActiveTab('record');
   };
 
-  // Placeholder for speech recognition initialization
-  const initializeSpeechRecognition = () => {
-    // This is a placeholder - in a real implementation, you would initialize
-    // a speech recognition library like @react-native-voice/voice
-    setRecognitionError('Speech recognition not implemented in this demo. In a full implementation, this would use device microphone to recognize speech.');
-    return null;
-  };
-
-  // Placeholder for processing recognized text
+  // Function to process recognized text and update highlighting
   const processRecognizedText = (text: string) => {
-    // This is a placeholder - in a real implementation, this would process
-    // the recognized text and update highlighting
-    console.log('Recognized text:', text);
-  };
-
-  // Placeholder for processing interim results
-  const processInterimText = (text: string) => {
-    // This is a placeholder - in a real implementation, this would process
-    // interim results for real-time feedback
-    console.log('Interim text:', text);
+    if (!selectedExercise?.passage) return;
+    
+    const recognizedWords = text.toLowerCase().split(/\s+/).filter(word => word.trim() !== '');
+    const passageWords = selectedExercise.passage.toLowerCase().split(/\s+/).filter(word => word.trim() !== '');
+    
+    // Create a set of indices for words that have been recognized
+    const newHighlightedWords = new Set<number>();
+    
+    // Simple matching algorithm - in a real implementation, you might want to use a more sophisticated approach
+    for (let i = 0; i < Math.min(recognizedWords.length, passageWords.length); i++) {
+      const recognizedWord = recognizedWords[i].replace(/[^\w]/g, '');
+      const passageWord = passageWords[i].replace(/[^\w]/g, '');
+      
+      if (recognizedWord === passageWord) {
+        newHighlightedWords.add(i);
+      }
+    }
+    
+    setHighlightedWords(newHighlightedWords);
+    setCurrentWordIndex(recognizedWords.length);
+    
+    // Check if exercise is complete (all words recognized)
+    if (recognizedWords.length >= passageWords.length) {
+      setIsExerciseComplete(true);
+    }
   };
 
   const startRecognition = async () => {
     if (!selectedExercise) return;
     
-    // Initialize recognition if not already done
-    if (!recognitionRef.current) {
-      recognitionRef.current = initializeSpeechRecognition();
-    }
-    
-    if (recognitionRef.current) {
-      try {
-        console.log('Starting recognition...');
-        // Reset error state
-        setRecognitionError(null);
-        // Reset completion state
-        setIsExerciseComplete(false);
-        // Start recognition
-        setIsRecognizing(true);
-        console.log('Recognition started successfully');
-      } catch (error: any) {
-        console.error('Error starting recognition:', error);
-        setRecognitionError(`Failed to start speech recognition: ${error.message || 'Please check your device settings and try again.'}`);
-        setIsRecognizing(false);
+    try {
+      // Request permissions
+      const permissionResult = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!permissionResult.granted) {
+        setRecognitionError('Microphone permission is required for speech recognition');
+        return;
       }
-    } else {
-      setRecognitionError('Failed to initialize speech recognition. Speech recognition functionality would be implemented in a full version.');
+      
+      // Reset error state
+      setRecognitionError(null);
+      // Reset completion state
+      setIsExerciseComplete(false);
+      setRecognizedText('');
+      
+      // Start recognition
+      ExpoSpeechRecognitionModule.start({
+        lang: 'en-US',
+        interimResults: true,
+        continuous: true,
+      });
+      
+      console.log('Recognition started successfully');
+    } catch (error: any) {
+      console.error('Error starting recognition:', error);
+      setRecognitionError(`Failed to start speech recognition: ${error.message || 'Please check your device settings and try again.'}`);
+      setIsRecognizing(false);
     }
   };
 
   const stopRecognition = () => {
     console.log('Stopping recognition...');
-    if (recognitionRef.current) {
-      try {
-        // Stop recognition if needed
-        console.log('Recognition stopped successfully');
-      } catch (error) {
-        console.error('Error stopping recognition:', error);
-      }
+    try {
+      ExpoSpeechRecognitionModule.stop();
+      console.log('Recognition stopped successfully');
+    } catch (error) {
+      console.error('Error stopping recognition:', error);
     }
     setIsRecognizing(false);
     setRecognitionError(null); // Clear any previous errors when stopping
