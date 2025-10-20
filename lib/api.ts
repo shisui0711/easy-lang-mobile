@@ -6,23 +6,25 @@ import * as SecureStore from 'expo-secure-store';
 // For mobile development, you'll need to use your machine's IP address
 // instead of localhost since localhost on mobile refers to the device itself
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.5:3000/api'; // Default to localhost for development
-
-// Add retry configuration
-const MAX_RETRY_ATTEMPTS = 3;
-const RETRY_DELAY = 1000; // 1 second
-const CONFIG = {
-    baseURL: BASE_URL,
+const BASE_CONFIG = {
+      baseURL: BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL,
       timeout: 15000, // Increased timeout for mobile networks
       headers: {
         'Content-Type': 'application/json',
       },
-  }
+    }
+// Add retry configuration
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_DELAY = 1000; // 1 second
 
 class ApiClient {
   private client: AxiosInstance;
 
   constructor() {
-    this.client = axios.create(CONFIG);
+    // Ensure the baseURL is properly formatted
+    const normalizedBaseUrl = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+    
+    this.client = axios.create(BASE_CONFIG);
 
     // Request interceptor to add auth token
     this.client.interceptors.request.use(
@@ -45,8 +47,8 @@ class ApiClient {
             delete config.headers['Content-Type'];
           }
           
-          console.log(`Making request to: ${config?.baseURL ?? "/" + config?.url}`);
-          console.log('Request headers:', config.headers);
+          console.log(`Making request to: ${config.baseURL}${config.url}`);
+          console.log('Request config:', config);
           
           return config;
         } catch (error) {
@@ -128,7 +130,7 @@ class ApiClient {
 
   async post<T>(url: string, data?: any): Promise<ApiResponse<T>> {
     try {
-      const response: AxiosResponse<T> = await this.client.post(url, data);
+      const response: AxiosResponse<T> = await this.client.post(url, data, BASE_CONFIG);
       return {
         success: true,
         data: response.data,
@@ -343,10 +345,21 @@ export const learningApi = {
 // AI API functions
 export const aiApi = {
   // STT (Speech-to-Text) APIs
-  transcribeAudio: (formData: FormData) =>
-    apiClient.post('/ai/stt', formData),
-  transcribeBatch: (formData: FormData) =>
-    apiClient.post('/ai/stt/batch', formData),
+  transcribeAudio: (data: {
+    file: string; // base64 encoded file or file path
+    fileName?: string;
+    fileType?: string;
+  }) => {
+    console.log('Making STT request with JSON data:', data);
+    return apiClient.post('/ai/stt', data);
+  },
+  transcribeBatch: (data: {
+    files: Array<{
+      file: string; // base64 encoded file or file path
+      fileName?: string;
+      fileType?: string;
+    }>;
+  }) => apiClient.post('/ai/stt/batch', data),
   getSTTInfo: (params?: { type?: 'engines' | 'languages' | 'health' }) =>
     apiClient.get('/ai/stt', { params }),
   
@@ -365,10 +378,14 @@ export const aiApi = {
     source_language?: string;
     engine?: string;
   }) => apiClient.post('/ai/translation/batch', data),
-  detectLanguage: (formData: FormData) =>
-    apiClient.post('/ai/translation/detect', formData),
-  quickTranslate: (formData: FormData) =>
-    apiClient.post('/ai/translation/quick', formData),
+  detectLanguage: (data: {
+    text: string;
+  }) => apiClient.post('/ai/translation/detect', data),
+  quickTranslate: (data: {
+    text: string;
+    target_language?: string;
+    source_language?: string;
+  }) => apiClient.post('/ai/translation/quick', data),
   getTranslationInfo: (params?: { type?: 'engines' | 'languages' | 'pairs' }) =>
     apiClient.get('/ai/translation', { params }),
   
@@ -398,6 +415,17 @@ export const aiApi = {
     apiClient.post('/ai/health'),
   getAICapabilities: () =>
     apiClient.get('/ai/capabilities'),
+  
+  // Speaking Response Generation
+  generateSpeakingResponse: (data: {
+    user_input: string;
+    exercise_type: string;
+    exercise_topic: string;
+    level?: string;
+    language?: string;
+    previous_context?: Array<{ speaker: string; text: string }>;
+  }) => apiClient.post('/ai/generate/speaking-response', data),
+
 };
 
 // Streak API functions
