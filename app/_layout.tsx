@@ -1,4 +1,3 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -7,6 +6,10 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { QueryProvider } from '@/contexts/QueryProvider';
+import { ThemeProvider } from '@/contexts/ThemeContext';
+import { SearchProvider } from '@/contexts/SearchContext';
+import { OnboardingProvider } from '@/contexts/OnboardingContext';
+import { FeedbackProvider } from '@/contexts/FeedbackContext';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -21,9 +24,15 @@ export default function RootLayout() {
   return (
     <QueryProvider>
       <AuthProvider>
-        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <RootLayoutNav />
-          <StatusBar style="auto" />
+        <ThemeProvider>
+          <SearchProvider>
+            <OnboardingProvider>
+              <FeedbackProvider>
+                <RootLayoutNav />
+                <StatusBar style="auto" />
+              </FeedbackProvider>
+            </OnboardingProvider>
+          </SearchProvider>
         </ThemeProvider>
       </AuthProvider>
     </QueryProvider>
@@ -33,6 +42,7 @@ export default function RootLayout() {
 function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="onboarding" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="auth" />
       <Stack.Screen name="+not-found" />

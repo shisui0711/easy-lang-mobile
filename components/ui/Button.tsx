@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { hapticFeedback } from '@/lib/utils';
+import { Spacing, Typography, BorderRadius } from '@/constants/Tokens';
+import { useThemeColor } from '@/hooks/useThemeColor';
 
 interface ButtonProps {
   title: string;
@@ -20,7 +22,10 @@ interface ButtonProps {
   fullWidth?: boolean;
   style?: ViewStyle;
   textStyle?: TextStyle;
-  gradientColors?: string[];
+  gradientColors?: [string, string] | [string, string, string];
+  accessible?: boolean;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -34,6 +39,10 @@ export const Button: React.FC<ButtonProps> = ({
   style,
   textStyle,
   gradientColors = ['#3B82F6', '#8B5CF6'],
+  accessible = true,
+  accessibilityLabel,
+  accessibilityHint,
+  ...rest
 }) => {
   const handlePress = async () => {
     if (!disabled && !loading) {
@@ -42,9 +51,15 @@ export const Button: React.FC<ButtonProps> = ({
     }
   };
 
+  const primaryColor = useThemeColor({}, 'primary');
+  const secondaryColor = useThemeColor({}, 'secondary');
+  const backgroundColor = useThemeColor({}, 'background');
+  const textColor = useThemeColor({}, 'text');
+  const cardColor = useThemeColor({}, 'card');
+
   const getButtonStyle = (): ViewStyle => {
     const baseStyle: ViewStyle = {
-      borderRadius: 12,
+      borderRadius: BorderRadius.md,
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
@@ -53,18 +68,18 @@ export const Button: React.FC<ButtonProps> = ({
     // Size styles
     switch (size) {
       case 'small':
-        baseStyle.paddingVertical = 8;
-        baseStyle.paddingHorizontal = 16;
+        baseStyle.paddingVertical = Spacing.sm;
+        baseStyle.paddingHorizontal = Spacing.md;
         baseStyle.minHeight = 36;
         break;
       case 'large':
-        baseStyle.paddingVertical = 16;
-        baseStyle.paddingHorizontal = 24;
+        baseStyle.paddingVertical = Spacing.lg;
+        baseStyle.paddingHorizontal = Spacing.xl;
         baseStyle.minHeight = 56;
         break;
       default: // medium
-        baseStyle.paddingVertical = 12;
-        baseStyle.paddingHorizontal = 20;
+        baseStyle.paddingVertical = Spacing.md;
+        baseStyle.paddingHorizontal = Spacing.lg;
         baseStyle.minHeight = 48;
     }
 
@@ -75,12 +90,12 @@ export const Button: React.FC<ButtonProps> = ({
     // Variant styles
     switch (variant) {
       case 'secondary':
-        baseStyle.backgroundColor = '#F1F5F9';
+        baseStyle.backgroundColor = cardColor;
         break;
       case 'outline':
         baseStyle.backgroundColor = 'transparent';
         baseStyle.borderWidth = 1;
-        baseStyle.borderColor = '#3B82F6';
+        baseStyle.borderColor = primaryColor;
         break;
       case 'ghost':
         baseStyle.backgroundColor = 'transparent';
@@ -89,7 +104,7 @@ export const Button: React.FC<ButtonProps> = ({
         // Gradient handled by LinearGradient wrapper
         break;
       default: // primary
-        baseStyle.backgroundColor = '#3B82F6';
+        baseStyle.backgroundColor = primaryColor;
     }
 
     if (disabled) {
@@ -101,34 +116,34 @@ export const Button: React.FC<ButtonProps> = ({
 
   const getTextStyle = (): TextStyle => {
     const baseTextStyle: TextStyle = {
-      fontWeight: '600',
+      fontWeight: Typography.button.fontWeight,
     };
 
     // Size styles
     switch (size) {
       case 'small':
-        baseTextStyle.fontSize = 14;
+        baseTextStyle.fontSize = Typography.bodySmall.fontSize;
         break;
       case 'large':
-        baseTextStyle.fontSize = 18;
+        baseTextStyle.fontSize = Typography.bodyLarge.fontSize;
         break;
       default: // medium
-        baseTextStyle.fontSize = 16;
+        baseTextStyle.fontSize = Typography.button.fontSize;
     }
 
     // Variant styles
     switch (variant) {
       case 'secondary':
-        baseTextStyle.color = '#1E293B';
+        baseTextStyle.color = textColor;
         break;
       case 'outline':
-        baseTextStyle.color = '#3B82F6';
+        baseTextStyle.color = primaryColor;
         break;
       case 'ghost':
-        baseTextStyle.color = '#3B82F6';
+        baseTextStyle.color = primaryColor;
         break;
       default: // primary and gradient
-        baseTextStyle.color = '#FFFFFF';
+        baseTextStyle.color = backgroundColor;
     }
 
     return baseTextStyle;
@@ -142,11 +157,16 @@ export const Button: React.FC<ButtonProps> = ({
       {loading && (
         <ActivityIndicator
           size="small"
-          color={variant === 'primary' || variant === 'gradient' ? '#FFFFFF' : '#3B82F6'}
-          style={{ marginRight: 8 }}
+          color={variant === 'primary' || variant === 'gradient' ? backgroundColor : primaryColor}
+          style={{ marginRight: Spacing.sm }}
         />
       )}
-      <Text style={finalTextStyle}>{title}</Text>
+      <Text 
+        style={finalTextStyle}
+        accessible={false} // Prevent nested accessibility elements
+      >
+        {title}
+      </Text>
     </>
   );
 
@@ -157,6 +177,12 @@ export const Button: React.FC<ButtonProps> = ({
         disabled={disabled || loading}
         activeOpacity={0.8}
         style={style}
+        accessible={accessible}
+        accessibilityLabel={accessibilityLabel || title}
+        accessibilityHint={accessibilityHint}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: disabled || loading }}
+        {...rest}
       >
         <LinearGradient
           colors={gradientColors}
@@ -176,6 +202,12 @@ export const Button: React.FC<ButtonProps> = ({
       disabled={disabled || loading}
       activeOpacity={0.8}
       style={buttonStyle}
+      accessible={accessible}
+      accessibilityLabel={accessibilityLabel || title}
+      accessibilityHint={accessibilityHint}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: disabled || loading }}
+      {...rest}
     >
       {content}
     </TouchableOpacity>

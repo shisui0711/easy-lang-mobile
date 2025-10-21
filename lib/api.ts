@@ -538,3 +538,21 @@ export const socialApi = {
   getUserStats: (userId: string) => 
     apiClient.get(`/social/profile/stats/${userId}`),
 };
+
+// User API functions
+export const userApi = {
+  // Get user profile
+  getProfile: () => apiClient.get('/user/profile'),
+  
+  // Update user profile
+  updateProfile: (data: any) => apiClient.put('/user/profile', data),
+  
+  // Get user statistics
+  getStats: () => apiClient.get('/user/stats'),
+  
+  // Get user achievements
+  getAchievements: () => apiClient.get('/user/achievements'),
+  
+  // Get user activities
+  getActivities: () => apiClient.get('/user/activities'),
+};

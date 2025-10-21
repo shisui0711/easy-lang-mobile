@@ -96,7 +96,7 @@ export const ProgressChart = () => {
             },
           ],
         }}
-        width={screenWidth}
+        width={300}
         height={220}
         chartConfig={chartConfig}
         bezier

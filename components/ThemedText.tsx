@@ -1,11 +1,15 @@
 import { StyleSheet, Text, type TextProps } from 'react-native';
 
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { Typography, Spacing } from '@/constants/Tokens';
 
 export type ThemedTextProps = TextProps & {
   lightColor?: string;
   darkColor?: string;
   type?: 'default' | 'title' | 'defaultSemiBold' | 'subtitle' | 'link';
+  accessible?: boolean;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 };
 
 export function ThemedText({
@@ -13,12 +17,18 @@ export function ThemedText({
   lightColor,
   darkColor,
   type = 'default',
+  accessible = true,
+  accessibilityLabel,
+  accessibilityHint,
   ...rest
 }: ThemedTextProps) {
   const color = useThemeColor({ light: lightColor, dark: darkColor }, 'text');
 
   return (
     <Text
+      accessible={accessible}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
       style={[
         { color },
         type === 'default' ? styles.default : undefined,
@@ -35,26 +45,27 @@ export function ThemedText({
 
 const styles = StyleSheet.create({
   default: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: Typography.body.fontSize,
+    lineHeight: Typography.body.lineHeight,
   },
   defaultSemiBold: {
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '600',
+    fontSize: Typography.body.fontSize,
+    lineHeight: Typography.body.lineHeight,
+    fontWeight: Typography.body.fontWeight,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    lineHeight: 32,
+    fontSize: Typography.heading1.fontSize,
+    fontWeight: Typography.heading1.fontWeight,
+    lineHeight: Typography.heading1.lineHeight,
   },
   subtitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: Typography.heading3.fontSize,
+    fontWeight: Typography.heading3.fontWeight,
+    lineHeight: Typography.heading3.lineHeight,
   },
   link: {
-    lineHeight: 30,
-    fontSize: 16,
+    lineHeight: Typography.body.lineHeight,
+    fontSize: Typography.body.fontSize,
     color: '#0a7ea4',
   },
 });

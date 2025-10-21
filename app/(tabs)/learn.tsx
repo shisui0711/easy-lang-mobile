@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 
 import { Card, CardContent, Progress } from '@/components/ui';
+import { SearchBar } from '@/components/ui/SearchBar';
 
 
 export default function LearnScreen() {
@@ -92,7 +93,7 @@ export default function LearnScreen() {
 
   const handleModulePress = (moduleId: string) => {
     // Navigate to specific learning module
-    router.push(`/learn/${moduleId}`);
+    router.push(`learn/${moduleId}` as any);
   };
 
   const renderLearningModule = (module: any, index: number) => (
@@ -173,6 +174,7 @@ export default function LearnScreen() {
         <Text style={styles.headerTitle}>Learn</Text>
         <Text style={styles.headerSubtitle}>Choose your learning path</Text>
       </View>
+      <SearchBar placeholder="Search vocabulary, grammar, lessons..." />
 
       <ScrollView showsVerticalScrollIndicator={false} style={styles.content}>
         {/* Daily Goals */}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,10 +17,12 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Button, Input, Card } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 import { isValidEmail } from '@/lib/utils';
 
 export default function SignInScreen() {
   const { login, isLoading } = useAuth();
+  const { isOnboardingComplete } = useOnboarding();
   const [formData, setFormData] = useState({
     username: '',
     password: '',
@@ -68,7 +70,12 @@ export default function SignInScreen() {
     });
 
     if (result.success) {
-      router.replace('/(tabs)');
+      // Check if onboarding is complete
+      if (isOnboardingComplete) {
+        router.replace('/(tabs)');
+      } else {
+        router.replace('/onboarding');
+      }
     } else {
       Alert.alert('Sign In Failed', result.error || 'Please check your credentials and try again.');
     }

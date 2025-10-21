@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
   TextInput,
   FlatList,
 } from 'react-native';
@@ -13,6 +12,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Progress, Button } from '@/components/ui';
 import { apiClient } from '@/lib/api';
+import { LoadingScreen } from '@/components/ui/LoadingScreen';
+import { ErrorDisplay } from '@/components/ui/ErrorDisplay';
 
 interface VocabularyCard {
   id: string;
@@ -253,6 +254,43 @@ export const PracticeSection = () => {
   }
 
   // Show vocabulary card selection
+  if (isLoading) {
+    return <LoadingScreen message="Loading vocabulary cards..." skeletonType="list" />;
+  }
+
+  if (error) {
+    return (
+      <ErrorDisplay
+        title="Failed to load vocabulary cards"
+        message={error}
+        onRetry={() => {
+          // Re-fetch vocabulary cards
+          const fetchVocabularyCards = async () => {
+            setIsLoading(true);
+            setError(null);
+            try {
+              const response = await apiClient.get('/vocabulary', {
+                params: { pageSize: 20 }
+              });
+              if (response.success) {
+                setVocabularyCards((response.data as any)?.data || []);
+              } else {
+                setError('Failed to fetch vocabulary cards');
+              }
+            } catch (err) {
+              setError('Failed to fetch vocabulary cards');
+              console.error('Error fetching vocabulary cards:', err);
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
+          fetchVocabularyCards();
+        }}
+      />
+    );
+  }
+
   return (
     <View style={styles.content}>
       <Text style={styles.sectionTitle}>Practice Your Vocabulary</Text>
@@ -260,31 +298,18 @@ export const PracticeSection = () => {
         Select a vocabulary word to practice with interactive questions
       </Text>
 
-      {error && (
-        <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{error}</Text>
-        </View>
-      )}
-
-      {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#3B82F6" />
-          <Text style={styles.loadingText}>Loading vocabulary cards...</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={vocabularyCards}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.vocabularyCardItem}
-              onPress={() => generateQuestions(item)}
-            >
-              <Text style={styles.vocabularyCardText}>{item.text}</Text>
-            </TouchableOpacity>
-          )}
-        />
-      )}
+      <FlatList
+        data={vocabularyCards}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.vocabularyCardItem}
+            onPress={() => generateQuestions(item)}
+          >
+            <Text style={styles.vocabularyCardText}>{item.text}</Text>
+          </TouchableOpacity>
+        )}
+      />
     </View>
   );
 };

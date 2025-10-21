@@ -48,6 +48,7 @@ export interface VocabularyCard {
 
 export interface Achievement {
   id: string;
+  achievementId: string;
   name: string;
   description: string;
   category: string;
@@ -58,6 +59,8 @@ export interface Achievement {
   earnedAt?: string;
   icon?: string;
   reward?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UserStats {
@@ -197,6 +200,15 @@ export interface LeaderboardEntry {
   streak: number;
   position: number;
   avatar?: string;
+}
+
+export interface UserActivity {
+  id: string;
+  type: 'writing' | 'speaking' | 'reading' | 'listening' | 'vocabulary';
+  title: string;
+  description: string;
+  timestamp: string;
+  metadata?: any;
 }
 
 // Navigation types

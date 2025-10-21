@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,9 @@ import { apiClient, learningApi, aiApi, gamificationApi } from '@/lib/api';
 import { SimpleAddWordForm } from './SimpleAddWordForm';
 import { ProgressChart } from '@/components/vocabulary/ProgressChart';
 import { AchievementNotification } from '@/components/vocabulary/AchievementNotification';
+import { LoadingScreen } from '@/components/ui/LoadingScreen';
+import { ErrorDisplay } from '@/components/ui/ErrorDisplay';
+import { useDebounce, useThrottle } from '@/lib/performance';
 import eventEmitter from '@/lib/eventEmitter';
 
 interface VocabularyCard {
@@ -46,6 +49,87 @@ enum Rating {
   Easy = 4
 }
 
+// Memoized components for better performance
+const VocabularyCardComponent = memo(({ 
+  card, 
+  showAnswer, 
+  isPlayingAudio, 
+  onPlayPronunciation,
+  onRevealAnswer
+}: {
+  card: VocabularyCard;
+  showAnswer: boolean;
+  isPlayingAudio: boolean;
+  onPlayPronunciation: (text: string) => void;
+  onRevealAnswer: () => void;
+}) => {
+  return (
+    <TouchableOpacity
+      onPress={onRevealAnswer}
+      disabled={showAnswer}
+    >
+      <LinearGradient
+        colors={['#3B82F6', '#6366F1']}
+        style={styles.vocabularyCard}
+      >
+        <View style={styles.cardContent}>
+          {!showAnswer ? (
+            <View style={styles.cardFront}>
+              <Text style={styles.wordText}>{card.word.text}</Text>
+              {card.word.pronunciation && (
+                <View style={styles.pronunciationContainer}>
+                  <Text style={styles.pronunciationText}>
+                    /{card.word.pronunciation}/
+                  </Text>
+                  <TouchableOpacity 
+                    onPress={() => onPlayPronunciation(card.word.text)}
+                    disabled={isPlayingAudio}
+                    style={styles.audioButton}
+                  >
+                    {isPlayingAudio ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Ionicons name="volume-high" size={20} color="#FFFFFF" />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+              {card.word.partOfSpeech && (
+                <Text style={styles.partOfSpeechText}>
+                  {card.word.partOfSpeech}
+                </Text>
+              )}
+              <View style={styles.tapHint}>
+                <Ionicons name="finger-print" size={24} color="rgba(255, 255, 255, 0.8)" />
+                <Text style={styles.tapHintText}>Tap to reveal meaning</Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.cardBack}>
+              <Text style={styles.meaningText}>{card.word.meaning}</Text>
+              {card.word.translation && (
+                <Text style={styles.translationText}>{card.word.translation}</Text>
+              )}
+              {card.word.examples && card.word.examples.length > 0 && (
+                <View style={styles.examplesContainer}>
+                  <Text style={styles.examplesTitle}>Examples:</Text>
+                  {card.word.examples.slice(0, 2).map((example, index) => (
+                    <Text key={index} style={styles.exampleText}>
+                      • {example}
+                    </Text>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+});
+
+VocabularyCardComponent.displayName = 'VocabularyCardComponent';
+
 export const ReviewSection = () => {
   const [cards, setCards] = useState<VocabularyCard[]>([]);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
@@ -63,32 +147,11 @@ export const ReviewSection = () => {
   const [isAnimating, setIsAnimating] = useState(false);
   const achievementNotificationRef = useRef<any>(null);
 
-  useEffect(() => {
-    fetchReviewCards();
-  }, []);
-
-  const fetchReviewCards = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const response = await apiClient.get('/review');
-      if (response.success && response.data) {
-        setCards(response.data as VocabularyCard[] || []);
-        setCurrentCardIndex(0);
-        setShowAnswer(false);
-      } else {
-        setError(response.error || 'Failed to fetch vocabulary cards');
-      }
-    } catch (error: any) {
-      console.error('Failed to fetch cards:', error);
-      setError(error.message || 'Failed to load vocabulary cards. Please check your connection and try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Throttled pronunciation function to prevent multiple rapid calls
+  const throttledPlayPronunciation = useThrottle(playPronunciation, 1000);
 
   // Play pronunciation using TTS
-  const playPronunciation = async (text: string) => {
+  async function playPronunciation(text: string) {
     if (!text) return;
     
     setIsPlayingAudio(true);
@@ -126,7 +189,35 @@ export const ReviewSection = () => {
     }
   };
 
-  const handleRatingSubmit = async (rating: Rating) => {
+  const fetchReviewCards = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await apiClient.get('/review');
+      if (response.success && response.data) {
+        setCards(response.data as VocabularyCard[] || []);
+        setCurrentCardIndex(0);
+        setShowAnswer(false);
+      } else {
+        setError(response.error || 'Failed to fetch vocabulary cards');
+      }
+    } catch (error: any) {
+      console.error('Failed to fetch cards:', error);
+      setError(error.message || 'Failed to load vocabulary cards. Please check your connection and try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Debounced fetch function to prevent multiple rapid calls
+  const debouncedFetchReviewCards = useDebounce(fetchReviewCards, 300);
+
+  useEffect(() => {
+    fetchReviewCards();
+  }, []);
+
+  // Memoized rating submit function
+  const handleRatingSubmit = useCallback(async (rating: Rating) => {
     const currentCard = cards[currentCardIndex];
     if (!currentCard || isSubmitting) return;
 
@@ -158,7 +249,7 @@ export const ReviewSection = () => {
             'Session Complete!',
             `You reviewed ${cards.length} cards.\nAccuracy: ${sessionStats.total > 0 ? Math.round(((sessionStats.correct + (rating === Rating.Good || rating === Rating.Easy ? 1 : 0)) / (sessionStats.total + 1)) * 100) : 0}%`,
             [
-              { text: 'Continue Learning', onPress: fetchReviewCards },
+              { text: 'Continue Learning', onPress: debouncedFetchReviewCards },
               { text: 'Back to Learn', onPress: () => router.back() }
             ]
           );
@@ -187,37 +278,20 @@ export const ReviewSection = () => {
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [cards, currentCardIndex, isSubmitting, sessionStats, debouncedFetchReviewCards]);
 
   if (isLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3B82F6" />
-        <Text style={styles.loadingText}>Loading vocabulary cards...</Text>
-      </View>
-    );
+    return <LoadingScreen message="Loading vocabulary cards..." skeletonType="list" />;
   }
 
   if (error) {
     return (
-      <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle" size={60} color="#EF4444" />
-        <Text style={styles.errorTitle}>Oops! Something went wrong</Text>
-        <Text style={styles.errorText}>{error}</Text>
-        <View style={styles.errorActions}>
-          <Button
-            title="Try Again"
-            onPress={fetchReviewCards}
-            style={styles.errorButton}
-          />
-          <Button
-            title="Back to Learn"
-            variant="outline"
-            onPress={() => router.back()}
-            style={styles.errorButton}
-          />
-        </View>
-      </View>
+      <ErrorDisplay
+        title="Oops! Something went wrong"
+        message={error}
+        onRetry={debouncedFetchReviewCards}
+        onGoBack={() => router.back()}
+      />
     );
   }
 
@@ -268,7 +342,7 @@ export const ReviewSection = () => {
         </View>
       </View>
 
-      <SimpleAddWordForm onWordAdded={fetchReviewCards} />
+      <SimpleAddWordForm onWordAdded={debouncedFetchReviewCards} />
 
       {/* Error Banner */}
       {error && (
@@ -285,8 +359,12 @@ export const ReviewSection = () => {
 
       {/* Vocabulary Card with Flip Animation */}
       <View style={styles.cardContainer}>
-        <TouchableOpacity
-          onPress={() => {
+        <VocabularyCardComponent
+          card={currentCard}
+          showAnswer={showAnswer}
+          isPlayingAudio={isPlayingAudio}
+          onPlayPronunciation={throttledPlayPronunciation}
+          onRevealAnswer={() => {
             if (!showAnswer) {
               setIsAnimating(true);
               setTimeout(() => {
@@ -295,65 +373,7 @@ export const ReviewSection = () => {
               }, 50);
             }
           }}
-          disabled={showAnswer || isAnimating}
-        >
-          <LinearGradient
-            colors={['#3B82F6', '#6366F1']}
-            style={styles.vocabularyCard}
-          >
-            <View style={styles.cardContent}>
-              {!showAnswer ? (
-                <View style={styles.cardFront}>
-                  <Text style={styles.wordText}>{currentCard.word.text}</Text>
-                  {currentCard.word.pronunciation && (
-                    <View style={styles.pronunciationContainer}>
-                      <Text style={styles.pronunciationText}>
-                        /{currentCard.word.pronunciation}/
-                      </Text>
-                      <TouchableOpacity 
-                        onPress={() => playPronunciation(currentCard.word.text)}
-                        disabled={isPlayingAudio}
-                        style={styles.audioButton}
-                      >
-                        {isPlayingAudio ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <Ionicons name="volume-high" size={20} color="#FFFFFF" />
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  {currentCard.word.partOfSpeech && (
-                    <Text style={styles.partOfSpeechText}>
-                      {currentCard.word.partOfSpeech}
-                    </Text>
-                  )}
-                  <View style={styles.tapHint}>
-                    <Ionicons name="finger-print" size={24} color="rgba(255, 255, 255, 0.8)" />
-                    <Text style={styles.tapHintText}>Tap to reveal meaning</Text>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.cardBack}>
-                  <Text style={styles.meaningText}>{currentCard.word.meaning}</Text>
-                  {currentCard.word.translation && (
-                    <Text style={styles.translationText}>{currentCard.word.translation}</Text>
-                  )}
-                  {currentCard.word.examples && currentCard.word.examples.length > 0 && (
-                    <View style={styles.examplesContainer}>
-                      <Text style={styles.examplesTitle}>Examples:</Text>
-                      {currentCard.word.examples.slice(0, 2).map((example, index) => (
-                        <Text key={index} style={styles.exampleText}>
-                          • {example}
-                        </Text>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
+        />
       </View>
 
       {/* Rating Buttons */}

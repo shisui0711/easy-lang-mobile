@@ -21,7 +21,9 @@ const MAPPING = {
   'book.fill': 'menu-book',
   'chart.bar.fill': 'bar-chart',
   'person.fill': 'person',
-} as IconMapping;
+  'magnifyingglass': 'search',
+  'chatbubble.fill': 'chat',
+} as unknown as IconMapping;
 
 /**
  * An icon component that uses native SF Symbols on iOS, and Material Icons on Android and web.

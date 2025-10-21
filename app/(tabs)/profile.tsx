@@ -14,10 +14,13 @@ import { Link } from 'expo-router';
 
 import { Card, CardContent, Button, Avatar, Badge } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from '@/contexts/ThemeContext';
+import { FeedbackButton } from '@/components/ui/FeedbackButton';
 import { formatDate } from '@/lib/utils';
 
 export default function ProfileScreen() {
   const { session, logout } = useAuth();
+  const { theme, setTheme, toggleTheme } = useTheme();
   const user = session?.user;
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -30,6 +33,39 @@ export default function ProfileScreen() {
   ];
 
   const menuItems = [
+    {
+      icon: 'contrast' as const,
+      title: 'Appearance',
+      subtitle: 'Light, dark, system',
+      onPress: () => {
+        // Show theme selection modal
+        Alert.alert(
+          'Choose Appearance',
+          'Select your preferred theme',
+          [
+            {
+              text: 'Light',
+              onPress: () => setTheme('light'),
+              style: theme === 'light' ? 'default' : 'cancel',
+            },
+            {
+              text: 'Dark',
+              onPress: () => setTheme('dark'),
+              style: theme === 'dark' ? 'default' : 'cancel',
+            },
+            {
+              text: 'System',
+              onPress: () => setTheme('system'),
+              style: theme === 'system' ? 'default' : 'cancel',
+            },
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+          ]
+        );
+      },
+    },
     {
       icon: 'settings' as const,
       title: 'Settings',
@@ -205,6 +241,7 @@ export default function ProfileScreen() {
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
+      <FeedbackButton />
     </SafeAreaView>
   );
 }

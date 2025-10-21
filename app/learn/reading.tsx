@@ -7,16 +7,16 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { RadioButton } from 'react-native-paper';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { Card, CardContent, Badge, Button } from '@/components/ui';
 import { apiClient } from '@/lib/api';
 import { PaginationResponse } from '@/types';
+import PracticeTab from '@/components/reading/PracticeTab';
+import ReadTab from '@/components/reading/ReadTab';
+import ProgressTab from '@/components/reading/ProgressTab';
+import { gradeAnswers } from '../../components/reading/utils';
 
 interface ReadingExercise {
   id: string;
@@ -93,11 +93,26 @@ export default function ReadingScreen() {
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  // Offline mode states
+  const [isOffline, setIsOffline] = useState(false);
+  const [offlineExercises, setOfflineExercises] = useState<ReadingExercise[]>([]);
+  const [syncPending, setSyncPending] = useState(false);
 
   useEffect(() => {
+    checkConnectionStatus();
     fetchExercises();
     fetchSubmissions();
+    loadOfflineData();
   }, [selectedLevel, selectedType, searchQuery]);
+
+  const checkConnectionStatus = async () => {
+    try {
+      const response = await fetch('https://httpbin.org/get', { method: 'HEAD', timeout: 5000 });
+      setIsOffline(false);
+    } catch (error) {
+      setIsOffline(true);
+    }
+  };
 
   const fetchExercises = async () => {
     setIsLoading(true);
@@ -121,10 +136,16 @@ export default function ReadingScreen() {
       const response = await apiClient.get<PaginationResponse<ReadingExercise>>('/reading/exercises', params);
       if (response.success && response.data) {
         setExercises(response.data.data || []);
+        // Save to offline storage if online
+        if (!isOffline) {
+          await AsyncStorage.setItem('offlineExercises', JSON.stringify(response.data.data || []));
+        }
       }
     } catch (error) {
       console.error('Failed to fetch exercises:', error);
-      Alert.alert('Error', 'Failed to load reading exercises');
+      // Try to load from offline storage
+      loadOfflineData();
+      Alert.alert('Error', 'Failed to load reading exercises. Showing offline content.');
     } finally {
       setIsLoading(false);
     }
@@ -133,13 +154,65 @@ export default function ReadingScreen() {
   const fetchSubmissions = async () => {
     try {
       const response = await apiClient.get<PaginationResponse<ReadingSubmission>>('/reading/submissions');
-      // The API returns data directly in the format: { data: [...], pagination: {...} }
       if (response && response.data) {
         console.log('Submissions:', response.data.data)
         setSubmissions(response.data.data || []);
+        // Save to offline storage if online
+        if (!isOffline) {
+          await AsyncStorage.setItem('offlineSubmissions', JSON.stringify(response.data.data || []));
+        }
       }
     } catch (error) {
       console.error('Failed to fetch submissions:', error);
+      // Try to load from offline storage
+      loadOfflineSubmissions();
+    }
+  };
+
+  const loadOfflineData = async () => {
+    try {
+      const offlineData = await AsyncStorage.getItem('offlineExercises');
+      if (offlineData) {
+        setOfflineExercises(JSON.parse(offlineData));
+      }
+    } catch (error) {
+      console.error('Failed to load offline exercises:', error);
+    }
+  };
+
+  const loadOfflineSubmissions = async () => {
+    try {
+      const offlineData = await AsyncStorage.getItem('offlineSubmissions');
+      if (offlineData) {
+        setSubmissions(JSON.parse(offlineData));
+      }
+    } catch (error) {
+      console.error('Failed to load offline submissions:', error);
+    }
+  };
+
+  const syncOfflineData = async () => {
+    setSyncPending(true);
+    try {
+      // Try to sync any pending submissions
+      const pendingSubmissions = await AsyncStorage.getItem('pendingSubmissions');
+      if (pendingSubmissions) {
+        const submissions = JSON.parse(pendingSubmissions);
+        for (const submission of submissions) {
+          await apiClient.post('/reading/submissions', submission);
+        }
+        // Clear pending submissions after successful sync
+        await AsyncStorage.removeItem('pendingSubmissions');
+        Alert.alert('Success', 'Offline data synced successfully!');
+      }
+      // Refresh data after sync
+      fetchExercises();
+      fetchSubmissions();
+    } catch (error) {
+      console.error('Failed to sync offline data:', error);
+      Alert.alert('Sync Error', 'Failed to sync offline data. Please try again later.');
+    } finally {
+      setSyncPending(false);
     }
   };
 
@@ -162,76 +235,7 @@ export default function ReadingScreen() {
     setAnswers(prev => ({ ...prev, [questionId]: answer }));
   };
 
-  // Automatic grading function
-  const gradeAnswers = (exercise: ReadingExercise, userAnswers: Record<string, string>): GradingResult => {
-    const questions = exercise.comprehensionQuestions || exercise.questions || [];
-    let totalScore = 0;
-    let maxScore = 0;
-    const feedback: QuestionFeedback[] = [];
-
-    for (const [index, question] of questions.entries()) {
-      // Use the same key format as in the question components (q0, q1, etc.)
-      const questionKey = `q${index}`;
-      const userAnswer = userAnswers[questionKey] || '';
-      const correctAnswer = question.correctAnswer;
-      const points = question.points || 1;
-      maxScore += points;
-
-      let isCorrect = false;
-      let normalizedCorrectAnswer: string | string[] = '';
-
-      switch (question.type) {
-        case 'MULTIPLE_CHOICE':
-        case 'multiple_choice':
-          isCorrect = userAnswer === (Array.isArray(correctAnswer) ? correctAnswer[0] : correctAnswer);
-          normalizedCorrectAnswer = Array.isArray(correctAnswer) ? correctAnswer.join(', ') : correctAnswer || '';
-          break;
-        case 'TRUE_FALSE':
-        case 'true_false':
-          isCorrect = userAnswer === (Array.isArray(correctAnswer) ? correctAnswer[0] : correctAnswer);
-          normalizedCorrectAnswer = Array.isArray(correctAnswer) ? correctAnswer.join(', ') : correctAnswer || '';
-          break;
-        case 'FILL_BLANK':
-        case 'fill_blank':
-        case 'SHORT_ANSWER':
-        case 'short_answer':
-          // For text-based answers, we'll do a case-insensitive comparison with some flexibility
-          const userAnswerLower = userAnswer.toLowerCase().trim();
-          if (Array.isArray(correctAnswer)) {
-            isCorrect = correctAnswer.some(ans => 
-              userAnswerLower.includes(ans.toLowerCase()) || 
-              ans.toLowerCase().includes(userAnswerLower)
-            );
-            normalizedCorrectAnswer = correctAnswer.join(' or ');
-          } else if (typeof correctAnswer === 'string') {
-            isCorrect = userAnswerLower === correctAnswer.toLowerCase();
-            normalizedCorrectAnswer = correctAnswer;
-          }
-          break;
-      }
-
-      if (isCorrect) {
-        totalScore += points;
-      }
-
-      feedback.push({
-        questionId: questionKey, // Use the same key format
-        isCorrect,
-        correctAnswer: normalizedCorrectAnswer,
-        explanation: question.explanation,
-        userAnswer
-      });
-    }
-
-    const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
-
-    return {
-      score: totalScore,
-      maxScore,
-      percentage,
-      feedback
-    };
-  };
+  // Use imported gradeAnswers function
 
   const submitAnswers = async () => {
     if (!selectedExercise || !startTime) return;
@@ -254,21 +258,30 @@ export default function ReadingScreen() {
     try {
       const readingTime = Math.floor((Date.now() - startTime) / 1000);
       
-      const response = await apiClient.post('/reading/submissions', {
+      const submissionData = {
         exerciseId: selectedExercise.id,
         answers,
         readingTime,
         autoGradeResult: result
-      });
+      };
 
-      if (response.success) {
-        // Just show a simple success message without navigating away
-        Alert.alert('Success!', 'Your answers have been submitted.');
-        // Don't navigate away - let the user view their results
-        // Don't clear the exercise or results state
-        fetchSubmissions(); // Refresh submissions for progress tab
+      if (isOffline) {
+        // Save to pending submissions for later sync
+        const pendingSubmissions = await AsyncStorage.getItem('pendingSubmissions');
+        const submissions = pendingSubmissions ? JSON.parse(pendingSubmissions) : [];
+        submissions.push(submissionData);
+        await AsyncStorage.setItem('pendingSubmissions', JSON.stringify(submissions));
+        Alert.alert('Saved Offline', 'Your answers have been saved and will be synced when you\'re online.');
       } else {
-        Alert.alert('Error', response.error || 'Failed to submit answers');
+        // Submit directly if online
+        const response = await apiClient.post('/reading/submissions', submissionData);
+
+        if (response.success) {
+          Alert.alert('Success!', 'Your answers have been submitted.');
+          fetchSubmissions(); // Refresh submissions for progress tab
+        } else {
+          Alert.alert('Error', response.error || 'Failed to submit answers');
+        }
       }
     } catch (error) {
       console.error('Failed to submit answers:', error);
@@ -315,6 +328,20 @@ export default function ReadingScreen() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#3B82F6" />
           <Text style={styles.loadingText}>Loading reading exercises...</Text>
+          {isOffline && (
+            <View style={styles.offlineIndicator}>
+              <Text style={styles.offlineText}>Offline Mode</Text>
+              <TouchableOpacity 
+                style={styles.syncButton}
+                onPress={syncOfflineData}
+                disabled={syncPending}
+              >
+                <Text style={styles.syncButtonText}>
+                  {syncPending ? 'Syncing...' : 'Sync Data'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -322,6 +349,22 @@ export default function ReadingScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Offline indicator */}
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>Offline Mode - Using cached content</Text>
+          <TouchableOpacity 
+            style={styles.syncButton}
+            onPress={syncOfflineData}
+            disabled={syncPending}
+          >
+            <Text style={styles.syncButtonText}>
+              {syncPending ? 'Syncing...' : 'Sync'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Tab Navigation */}
       <View style={styles.tabContainer}>
         {['practice', 'read', 'progress'].map((tab) => (
@@ -346,581 +389,43 @@ export default function ReadingScreen() {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Practice Tab */}
         {activeTab === 'practice' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Choose a Reading Exercise</Text>
-            
-            {/* Filters */}
-            <View style={styles.filterContainer}>
-              <View style={styles.filterRow}>
-                <TouchableOpacity 
-                  key="all-types"
-                  style={[styles.filterButton, selectedType === 'all' && styles.activeFilterButton]}
-                  onPress={() => setSelectedType('all')}
-                >
-                  <Text style={[styles.filterButtonText, selectedType === 'all' && styles.activeFilterButtonText]}>
-                    All Types
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  key="comprehension"
-                  style={[styles.filterButton, selectedType === 'COMPREHENSION' && styles.activeFilterButton]}
-                  onPress={() => setSelectedType('COMPREHENSION')}
-                >
-                  <Text style={[styles.filterButtonText, selectedType === 'COMPREHENSION' && styles.activeFilterButtonText]}>
-                    Comprehension
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  key="vocabulary"
-                  style={[styles.filterButton, selectedType === 'VOCABULARY' && styles.activeFilterButton]}
-                  onPress={() => setSelectedType('VOCABULARY')}
-                >
-                  <Text style={[styles.filterButtonText, selectedType === 'VOCABULARY' && styles.activeFilterButtonText]}>
-                    Vocabulary
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              
-              <View style={styles.filterRow}>
-                <TouchableOpacity 
-                  key="grammar"
-                  style={[styles.filterButton, selectedType === 'GRAMMAR' && styles.activeFilterButton]}
-                  onPress={() => setSelectedType('GRAMMAR')}
-                >
-                  <Text style={[styles.filterButtonText, selectedType === 'GRAMMAR' && styles.activeFilterButtonText]}>
-                    Grammar
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  key="ielts"
-                  style={[styles.filterButton, selectedType === 'IELTS_READING' && styles.activeFilterButton]}
-                  onPress={() => setSelectedType('IELTS_READING')}
-                >
-                  <Text style={[styles.filterButtonText, selectedType === 'IELTS_READING' && styles.activeFilterButtonText]}>
-                    IELTS Reading
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  key="speed"
-                  style={[styles.filterButton, selectedType === 'SPEED_READING' && styles.activeFilterButton]}
-                  onPress={() => setSelectedType('SPEED_READING')}
-                >
-                  <Text style={[styles.filterButtonText, selectedType === 'SPEED_READING' && styles.activeFilterButtonText]}>
-                    Speed Reading
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              
-              <View style={styles.filterRow}>
-                <TouchableOpacity 
-                  key="critical"
-                  style={[styles.filterButton, selectedType === 'CRITICAL_THINKING' && styles.activeFilterButton]}
-                  onPress={() => setSelectedType('CRITICAL_THINKING')}
-                >
-                  <Text style={[styles.filterButtonText, selectedType === 'CRITICAL_THINKING' && styles.activeFilterButtonText]}>
-                    Critical Thinking
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              
-              <View style={styles.filterRow}>
-                <TouchableOpacity 
-                  key="all-levels"
-                  style={[styles.filterButton, selectedLevel === 'all' && styles.activeFilterButton]}
-                  onPress={() => setSelectedLevel('all')}
-                >
-                  <Text style={[styles.filterButtonText, selectedLevel === 'all' && styles.activeFilterButtonText]}>
-                    All Levels
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  key="beginner"
-                  style={[styles.filterButton, selectedLevel === 'Beginner' && styles.activeFilterButton]}
-                  onPress={() => setSelectedLevel('Beginner')}
-                >
-                  <Text style={[styles.filterButtonText, selectedLevel === 'Beginner' && styles.activeFilterButtonText]}>
-                    Beginner
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  key="intermediate"
-                  style={[styles.filterButton, selectedLevel === 'Intermediate' && styles.activeFilterButton]}
-                  onPress={() => setSelectedLevel('Intermediate')}
-                >
-                  <Text style={[styles.filterButtonText, selectedLevel === 'Intermediate' && styles.activeFilterButtonText]}>
-                    Intermediate
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              
-              <View style={styles.filterRow}>
-                <TouchableOpacity 
-                  key="advanced"
-                  style={[styles.filterButton, selectedLevel === 'Advanced' && styles.activeFilterButton]}
-                  onPress={() => setSelectedLevel('Advanced')}
-                >
-                  <Text style={[styles.filterButtonText, selectedLevel === 'Advanced' && styles.activeFilterButtonText]}>
-                    Advanced
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  key="expert"
-                  style={[styles.filterButton, selectedLevel === 'Expert' && styles.activeFilterButton]}
-                  onPress={() => setSelectedLevel('Expert')}
-                >
-                  <Text style={[styles.filterButtonText, selectedLevel === 'Expert' && styles.activeFilterButtonText]}>
-                    Expert
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              
-              <View style={styles.searchContainer}>
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search exercises..."
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                />
-                <Ionicons name="search" size={20} color="#64748B" style={styles.searchIcon} />
-              </View>
-            </View>
-            
-            <View style={styles.exercisesGrid}>
-              {exercises.map((exercise) => (
-                <TouchableOpacity
-                  key={exercise.id}
-                  onPress={() => startReading(exercise)}
-                  style={styles.exerciseCard}
-                >
-                  <LinearGradient
-                    colors={getLevelColor(exercise.level)}
-                    style={styles.exerciseGradient}
-                  >
-                    <View style={styles.exerciseHeader}>
-                      <Badge style={styles.levelBadge}>
-                        <Text style={styles.levelBadgeText}>{exercise.level}</Text>
-                      </Badge>
-                      <Text style={styles.typeText}>{exercise.type.replace('_', ' ')}</Text>
-                    </View>
-                    <Text style={styles.exerciseTitle}>{exercise.title}</Text>
-                    {exercise.topic && (
-                      <Text style={styles.topicText}>{exercise.topic.name} • {exercise.level}</Text>
-                    )}
-                    <Text style={styles.exerciseContentPreview}>
-                      {exercise.content.substring(0, 100)}...
-                    </Text>
-                    <View style={styles.exerciseDetails}>
-                      {exercise.wordCount && (
-                        <View key="word-count" style={styles.detailItem}>
-                          <Ionicons name="document-text" size={16} color="rgba(255, 255, 255, 0.8)" />
-                          <Text style={styles.detailText}>{exercise.wordCount} words</Text>
-                        </View>
-                      )}
-                      <View key="time" style={styles.detailItem}>
-                        <Ionicons name="time" size={16} color="rgba(255, 255, 255, 0.8)" />
-                        <Text style={styles.detailText}>{exercise.estimatedTime} min</Text>
-                      </View>
-                      {(exercise.questions || exercise.comprehensionQuestions) && (
-                        <View key="questions" style={styles.detailItem}>
-                          <Ionicons name="help-circle" size={16} color="rgba(255, 255, 255, 0.8)" />
-                          <Text style={styles.detailText}>{(exercise.questions || exercise.comprehensionQuestions)?.length} questions</Text>
-                        </View>
-                      )}
-                    </View>
-                  </LinearGradient>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
+          <PracticeTab
+            exercises={isOffline ? offlineExercises : exercises}
+            selectedLevel={selectedLevel}
+            selectedType={selectedType}
+            searchQuery={searchQuery}
+            onLevelChange={setSelectedLevel}
+            onTypeChange={setSelectedType}
+            onSearchChange={setSearchQuery}
+            onStartReading={startReading}
+          />
         )}
 
         {/* Read Tab */}
         {activeTab === 'read' && selectedExercise && (
-          <View style={styles.section}>
-            {!readingStarted ? (
-              <Card style={styles.readyCard}>
-                <CardContent style={styles.readyContent}>
-                  <Ionicons name="book" size={48} color="#3B82F6" />
-                  <Text style={styles.readyTitle}>{selectedExercise.title}</Text>
-                  <View style={styles.readyStats}>
-                    <View key="words" style={styles.readyStat}>
-                      <Ionicons name="document-text" size={20} color="#64748B" />
-                      <Text style={styles.readyStatText}>
-                        {selectedExercise.wordCount} words
-                      </Text>
-                    </View>
-                    <View key="time" style={styles.readyStat}>
-                      <Ionicons name="time" size={20} color="#64748B" />
-                      <Text style={styles.readyStatText}>
-                        ~{selectedExercise.estimatedTime} minutes
-                      </Text>
-                    </View>
-                    <View key="questions" style={styles.readyStat}>
-                      <Ionicons name="help-circle" size={20} color="#64748B" />
-                      <Text style={styles.readyStatText}>
-                        {(selectedExercise.questions || selectedExercise.comprehensionQuestions)?.length} questions
-                      </Text>
-                    </View>
-                  </View>
-                  <Button
-                    title="Start Reading"
-                    onPress={beginReading}
-                    style={styles.startButton}
-                  />
-                </CardContent>
-              </Card>
-            ) : showResults && gradingResult ? (
-              <Card style={styles.resultsCard}>
-                <CardContent style={styles.resultsContent}>
-                  <Text style={styles.resultsTitle}>Your Results</Text>
-                  <Text style={styles.resultsSubtitle}>Here&apos;s how you did on this exercise</Text>
-                  
-                  <View style={styles.scoreContainer}>
-                    <View key="percentage" style={styles.scoreBox}>
-                      <Text style={[styles.scoreValue, { color: getScoreColor(gradingResult.percentage) }]}>
-                        {gradingResult.percentage}%
-                      </Text>
-                      <Text style={styles.scoreLabel}>Score</Text>
-                    </View>
-                    <View key="correct" style={styles.scoreBox}>
-                      <Text style={styles.scoreValuePrimary}>
-                        {gradingResult.score}/{gradingResult.maxScore}
-                      </Text>
-                      <Text style={styles.scoreLabel}>Correct Answers</Text>
-                    </View>
-                    <View key="total" style={styles.scoreBox}>
-                      <Text style={styles.scoreValuePrimary}>
-                        {(selectedExercise.questions || selectedExercise.comprehensionQuestions)?.length}
-                      </Text>
-                      <Text style={styles.scoreLabel}>Total Questions</Text>
-                    </View>
-                  </View>
-                  
-                  <Text style={styles.questionReviewTitle}>Question Review</Text>
-                  {(selectedExercise.comprehensionQuestions || selectedExercise.questions)?.map((question, index) => {
-                    // Use the same key format as in the grading function (q0, q1, etc.)
-                    const questionKey = `q${index}`;
-                    const feedbackItem = gradingResult.feedback.find(f => f.questionId === questionKey);
-                    return (
-                      <Card 
-                        key={questionKey} 
-                        style={
-                          feedbackItem?.isCorrect 
-                            ? {
-                                ...styles.feedbackCard,
-                                borderLeftColor: styles.correctCard.borderLeftColor,
-                                backgroundColor: styles.correctCard.backgroundColor,
-                              }
-                            : {
-                                ...styles.feedbackCard,
-                                borderLeftColor: styles.incorrectCard.borderLeftColor,
-                                backgroundColor: styles.incorrectCard.backgroundColor,
-                              }
-                        }
-                      >
-                        <CardContent style={styles.feedbackContent}>
-                          <View style={styles.feedbackHeader}>
-                            <Text style={styles.questionNumber}>
-                              Question {index + 1}
-                            </Text>
-                            <Ionicons 
-                              name={feedbackItem?.isCorrect ? "checkmark-circle" : "close-circle"} 
-                              size={24} 
-                              color={feedbackItem?.isCorrect ? "#10B981" : "#EF4444"} 
-                            />
-                          </View>
-                          <Text style={styles.questionText}>{question.question}</Text>
-                          
-                          <View key="user-answer" style={styles.answerRow}>
-                            <Text style={styles.answerLabel}>Your answer:</Text>
-                            <Text style={[
-                              styles.answerValue,
-                              feedbackItem?.isCorrect ? styles.correctAnswer : styles.incorrectAnswer
-                            ]}>
-                              {feedbackItem?.userAnswer || "(No answer)"}
-                            </Text>
-                          </View>
-                          
-                          {!feedbackItem?.isCorrect && (
-                            <View key="correct-answer" style={styles.answerRow}>
-                              <Text style={styles.answerLabel}>Correct answer:</Text>
-                              <Text style={styles.correctAnswer}>
-                                {Array.isArray(feedbackItem?.correctAnswer) 
-                                  ? feedbackItem?.correctAnswer.join(', ') 
-                                  : feedbackItem?.correctAnswer}
-                              </Text>
-                            </View>
-                          )}
-                          
-                          {feedbackItem?.explanation && (
-                            <View key="explanation" style={styles.explanationContainer}>
-                              <Text style={styles.explanationLabel}>Explanation:</Text>
-                              <Text style={styles.explanationText}>{feedbackItem.explanation}</Text>
-                            </View>
-                          )}
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                  
-                  <View style={styles.resultsActions}>
-                    <Button
-                      key="review"
-                      title="Review Exercise"
-                      onPress={() => setShowResults(false)}
-                      variant="secondary"
-                      style={styles.reviewButton}
-                    />
-                    <Button
-                      key="choose"
-                      title="Choose Different Exercise"
-                      onPress={() => {
-                        setShowResults(false);
-                        setSelectedExercise(null);
-                        setGradingResult(null);
-                        setActiveTab('practice'); // Navigate back to practice tab
-                      }}
-                      style={styles.chooseExerciseButton}
-                    />
-                  </View>
-                </CardContent>
-              </Card>
-            ) : (
-              <>
-                {/* Reading Content */}
-                <Card style={styles.contentCard}>
-                  <CardContent style={styles.contentCardContent}>
-                    <Text style={styles.contentTitle}>{selectedExercise.title}</Text>
-                    <Text style={styles.contentText}>{selectedExercise.content}</Text>
-                  </CardContent>
-                </Card>
-
-                {/* Questions */}
-                <View style={styles.questionsContainer}>
-                  {/* Debug: Show questions array info */}
-                  <Text style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
-                    Questions: {selectedExercise.questions?.length || 0}, 
-                    Comprehension: {selectedExercise.comprehensionQuestions?.length || 0}
-                  </Text>
-                  
-                  {/* Show message if no questions */}
-                  {!(selectedExercise.questions || selectedExercise.comprehensionQuestions) && (
-                    <Text style={{ fontSize: 14, color: '#f00', marginBottom: 16 }}>
-                      No questions found in this exercise!
-                    </Text>
-                  )}
-                  
-                  <Text style={styles.questionsTitle}>Questions</Text>
-                  {(selectedExercise.comprehensionQuestions || selectedExercise.questions)?.map((question, index) => (
-                    <Card key={index} style={styles.questionCard}>
-                      <CardContent style={styles.questionContent}>
-                        <Text style={styles.questionNumber}>
-                          Question {index + 1}
-                        </Text>
-                        <Text style={styles.questionText}>{question.question}</Text>
-                        {/* Multiple choice questions */}
-                        {((question.type === 'MULTIPLE_CHOICE' || question.type === 'multiple_choice') && question.options) && (
-                          <View style={styles.optionsContainer}>
-                            {question.options.map((option, optionIndex) => (
-                              <TouchableOpacity
-                                key={`${index}-${optionIndex}`}
-                                onPress={() => handleAnswerChange(`q${index}`, option)}
-                                style={styles.optionItem}
-                              >
-                                <RadioButton
-                                  key={`radio-${index}-${optionIndex}`}
-                                  value={option}
-                                  status={answers[`q${index}`] === option ? 'checked' : 'unchecked'}
-                                  onPress={() => handleAnswerChange(`q${index}`, option)}
-                                  color="#3B82F6"
-                                />
-                                <Text style={styles.optionText}>{option}</Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                        )}
-
-                        {/* True/False questions */}
-                        {(question.type === 'TRUE_FALSE' || question.type === 'true_false') && (
-                          <View style={styles.optionsContainer}>
-                            {['True', 'False'].map((option, optionIndex) => (
-                              <TouchableOpacity
-                                key={`${index}-${option}`}
-                                onPress={() => handleAnswerChange(`q${index}`, option)}
-                                style={styles.optionItem}
-                              >
-                                <RadioButton
-                                  key={`radio-${index}-${optionIndex}`}
-                                  value={option}
-                                  status={answers[`q${index}`] === option ? 'checked' : 'unchecked'}
-                                  onPress={() => handleAnswerChange(`q${index}`, option)}
-                                  color="#3B82F6"
-                                />
-                                <Text style={styles.optionText}>{option}</Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                        )}
-                        
-                        {/* Short answer and fill blank questions */}
-                        {(question.type === 'SHORT_ANSWER' || question.type === 'FILL_BLANK' || 
-                          question.type === 'short_answer' || question.type === 'fill_blank') && (
-                          <View style={styles.textInputContainer}>
-                            <TextInput
-                              key={`text-${index}`}
-                              style={styles.textInput}
-                              placeholder="Enter your answer"
-                              value={answers[`q${index}`] || ''}
-                              onChangeText={(text) => handleAnswerChange(`q${index}`, text)}
-                              multiline
-                            />
-                          </View>
-                        )}
-                        
-                        {/* Debug: Show when no matching type is found */}
-                        {question.type !== 'MULTIPLE_CHOICE' && 
-                         question.type !== 'TRUE_FALSE' && 
-                         question.type !== 'SHORT_ANSWER' && 
-                         question.type !== 'FILL_BLANK' &&
-                         question.type !== 'multiple_choice' && 
-                         question.type !== 'true_false' && 
-                         question.type !== 'short_answer' && 
-                         question.type !== 'fill_blank' && (
-                          <Text style={{ fontSize: 12, color: '#f00', marginTop: 4 }}>
-                            Unsupported question type: {question.type}
-                          </Text>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
-
-                  <View style={styles.submitContainer}>
-                    <Button
-                      title="Choose Different Exercise"
-                      onPress={() => setSelectedExercise(null)}
-                      style={styles.cancelButton}
-                      variant="secondary"
-                    />
-                    <Button
-                      title={isSubmitting ? 'Submitting...' : 'Submit Answers'}
-                      onPress={submitAnswers}
-                      disabled={isSubmitting || Object.keys(answers).length === 0 || Object.keys(answers).length !== (selectedExercise.questions || selectedExercise.comprehensionQuestions)?.length}
-                      loading={isSubmitting}
-                      style={styles.submitButton}
-                    />
-                  </View>
-                </View>
-
-              </>
-            )}
-          </View>
+          <ReadTab
+            selectedExercise={selectedExercise}
+            readingStarted={readingStarted}
+            showResults={showResults}
+            gradingResult={gradingResult}
+            answers={answers}
+            isSubmitting={isSubmitting}
+            onBeginReading={beginReading}
+            onShowResults={setShowResults}
+            onAnswerChange={handleAnswerChange}
+            onSubmitAnswers={submitAnswers}
+            onSelectExercise={setSelectedExercise}
+            setActiveTab={setActiveTab}
+            isOffline={isOffline}
+          />
         )}
 
         {/* Progress Tab */}
         {activeTab === 'progress' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Reading Progress</Text>
-            {submissions.length === 0 ? (
-              <Card style={styles.emptyCard}>
-                <CardContent style={styles.emptyContent}>
-                  <Ionicons name="book" size={48} color="#94A3B8" />
-                  <Text style={styles.emptyTitle}>No submissions yet</Text>
-                  <Text style={styles.emptySubtitle}>
-                    Start reading to see your progress here
-                  </Text>
-                </CardContent>
-              </Card>
-            ) : (
-              <View style={styles.submissionsContainer}>
-                {submissions.map((submission) => {
-                  const exercise = exercises.find(e => e.id === submission.exerciseId);
-                  return (
-                    <Card key={submission.id} style={styles.submissionCard}>
-                      <CardContent style={styles.submissionContent}>
-                        <View style={styles.submissionHeader}>
-                          <Text style={styles.submissionTitle}>
-                            {exercise?.title || 'Unknown Exercise'}
-                          </Text>
-                          <Text style={styles.submissionDate}>
-                            {new Date(submission.createdAt).toLocaleDateString()}
-                          </Text>
-                        </View>
-                        
-                        {submission.overallScore && (
-                          <View key="overall-score" style={styles.scoreRow}>
-                            <Text style={styles.scoreLabelProgress}>Overall Score:</Text>
-                            <Badge style={{
-                              backgroundColor: getScoreColor(submission.overallScore),
-                              paddingHorizontal: 8,
-                              paddingVertical: 4,
-                              borderRadius: 8,
-                            }}>
-                              <Text style={styles.scoreText}>{submission.overallScore}%</Text>
-                            </Badge>
-                          </View>
-                        )}
-                        
-                        {submission.autoGradeResult && (
-                          <View key="correct-answers" style={styles.scoreRow}>
-                            <Text style={styles.scoreLabelProgress}>Correct Answers:</Text>
-                            <Text style={styles.scoreValueProgress}>
-                              {submission.autoGradeResult.score}/{submission.autoGradeResult.maxScore}
-                            </Text>
-                          </View>
-                        )}
-                        
-                        {submission.readingTime && (
-                          <View key="reading-time" style={styles.scoreRow}>
-                            <Text style={styles.scoreLabelProgress}>Reading Time:</Text>
-                            <Text style={styles.scoreValueProgress}>
-                              {formatTime(submission.readingTime)}
-                            </Text>
-                          </View>
-                        )}
-                        
-                        {exercise?.wordCount && submission.readingTime && (
-                          <View key="reading-speed" style={styles.scoreRow}>
-                            <Text style={styles.scoreLabelProgress}>Reading Speed:</Text>
-                            <Text style={styles.scoreValueProgress}>
-                              {calculateReadingSpeed(exercise.wordCount, submission.readingTime)} WPM
-                            </Text>
-                          </View>
-                        )}
-                        
-                        {submission.autoGradeResult?.feedback && (
-                          <View key="feedback" style={styles.feedbackSummary}>
-                            <Text style={styles.feedbackTitle}>Summary</Text>
-                            <View style={styles.feedbackItems}>
-                              {submission.autoGradeResult.feedback.slice(0, 3).map((item, index) => (
-                                <View key={`feedback-${index}`} style={styles.feedbackItem}>
-                                  <Ionicons 
-                                    name={item.isCorrect ? "checkmark-circle" : "close-circle"} 
-                                    size={16} 
-                                    color={item.isCorrect ? "#10B981" : "#EF4444"} 
-                                  />
-                                  <Text style={[
-                                    styles.feedbackItemText,
-                                    item.isCorrect ? styles.correctText : styles.incorrectText
-                                  ]}>
-                                    Q{index + 1}: {item.isCorrect ? 'Correct' : 'Incorrect'}
-                                  </Text>
-                                </View>
-                              ))}
-                              {submission.autoGradeResult.feedback.length > 3 && (
-                                <Text key="more" style={styles.moreFeedbackText}>
-                                  +{submission.autoGradeResult.feedback.length - 3} more questions
-                                </Text>
-                              )}
-                            </View>
-                          </View>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </View>
-            )}
-          </View>
+          <ProgressTab
+            submissions={submissions}
+            exercises={exercises}
+          />
         )}
       </ScrollView>
     </SafeAreaView>
@@ -1438,5 +943,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94A3B8',
     marginTop: 4,
+  },
+  offlineBanner: {
+    backgroundColor: '#F59E0B',
+    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  offlineBannerText: {
+    color: '#FFF',
+    fontWeight: '600',
+  },
+  syncButton: {
+    backgroundColor: '#FFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  syncButtonText: {
+    color: '#F59E0B',
+    fontWeight: '600',
+  },
+  offlineIndicator: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  offlineText: {
+    color: '#6B7280',
+    marginBottom: 8,
   },
 });
