@@ -385,22 +385,24 @@ export default function WritingScreen() {
 
   // Function to fetch exercises
   const fetchExercises = async () => {
+    setIsLoading(true);
     try {
       const response = await learningApi.getWritingExercises({
-        search: debouncedSearchQuery,
+        searchQuery: debouncedSearchQuery
         // Add other parameters as needed
       });
-      
       if (response.success && response.data) {
         // Transform API response to match WritingExercise interface
-        const exercisesData = Array.isArray(response.data) ? response.data : [];
+        const responseData: any = response.data;
+        const exercisesData = Array.isArray(responseData) ? responseData : 
+                             (responseData.data && Array.isArray(responseData.data)) ? responseData.data : [];
         const exercises = exercisesData.map((exercise: any) => ({
           id: exercise.id,
           title: exercise.title,
           instructions: exercise.instructions,
           level: exercise.level,
           difficulty: exercise.difficulty,
-          type: exercise.type,
+          type: exercise.type.toUpperCase() || 'TRANSLATION', // Default to TRANSLATION if not set
           sourceLanguage: exercise.sourceLanguage,
           targetLanguage: exercise.targetLanguage,
           totalSentences: exercise.totalSentences,
@@ -410,6 +412,7 @@ export default function WritingScreen() {
           sentences: exercise.sentences,
           _count: exercise._count
         }));
+        console.log('Fetched exercises:', exercises);
         setExercises(exercises);
       } else {
         throw new Error(response.error || 'Failed to fetch exercises');
@@ -417,6 +420,8 @@ export default function WritingScreen() {
     } catch (error) {
       console.error('Error fetching exercises:', error);
       Alert.alert('Error', 'Failed to fetch exercises');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -427,6 +432,7 @@ export default function WritingScreen() {
       
       // Set current exercise
       setCurrentExercise(exercise);
+      console.log('Starting exercise with type:', exercise.type);
       
       // Fetch writing guidance for this exercise type
       await fetchWritingGuidance(exercise.type);
@@ -512,7 +518,7 @@ export default function WritingScreen() {
     };
   }, []);
 
-  // Load offline drafts from local storage
+  // Load offline drafts from local storage when component mounts
   useEffect(() => {
     const loadOfflineDrafts = async () => {
       try {
@@ -526,7 +532,15 @@ export default function WritingScreen() {
     };
 
     loadOfflineDrafts();
+    
+    // Fetch exercises when component mounts
+    fetchExercises();
   }, []);
+
+  // Fetch exercises when search query changes
+  useEffect(() => {
+    fetchExercises();
+  }, [debouncedSearchQuery]);
 
   // The saveOfflineDraft function handles saving to AsyncStorage
 
@@ -562,7 +576,24 @@ export default function WritingScreen() {
 
   // Submit translation (updated to handle offline mode and AI coach)
   const submitTranslation = async () => {
-    if (!userTranslation.trim() || !currentSentence || !currentSubmission || !currentExercise) {
+    console.log('submitTranslation called');
+    if (!userTranslation.trim() || !currentSentence || !currentSentence.id || !currentSubmission || !currentExercise) {
+      console.error('Missing required data for translation submission:', { userTranslation: userTranslation.trim(), currentSentence, currentSubmission, currentExercise });
+      Alert.alert('Error', 'Missing required data for translation submission');
+      return;
+    }
+    
+    // Ensure sentenceId is not empty
+    if (!currentSentence.id.trim()) {
+      console.error('Invalid sentenceId for translation submission:', currentSentence.id);
+      Alert.alert('Error', 'Invalid sentence data');
+      return;
+    }
+    
+    // Ensure sentenceId is not empty
+    if (!currentSentence.id.trim()) {
+      console.error('Invalid sentenceId for translation submission:', currentSentence.id);
+      Alert.alert('Error', 'Invalid sentence data');
       return;
     }
 
@@ -582,26 +613,30 @@ export default function WritingScreen() {
       const timeSpent = Math.round((Date.now() - startTime) / 1000);
 
       // Call API to submit the translation and get feedback
-      const response = await learningApi.submitWriting(currentExercise.id, userTranslation, timeSpent);
+      console.log('Submitting translation with:', { exerciseId: currentExercise.id, userTranslation, timeSpent, sentenceId: currentSentence.id });
+      const response = await learningApi.submitWriting(currentExercise.id, userTranslation, timeSpent, currentSentence.id);
       
       if (response.success && response.data) {
         // Use the actual API response
         const responseData = response.data as any;
+        console.log("res",responseData)
+        // Handle the actual response structure where feedback data is nested under 'analysis'
+        const analysisData = responseData.analysis || responseData;
         const feedbackData: FeedbackData = {
-          isCorrect: responseData.isCorrect || false,
-          accuracyScore: responseData.accuracyScore || 0,
-          grammarScore: responseData.grammarScore || 0,
-          vocabularyScore: responseData.vocabularyScore || 0,
-          fluencyScore: responseData.fluencyScore || 0,
-          feedback: responseData.feedback || {
+          isCorrect: analysisData.isCorrect || false,
+          accuracyScore: analysisData.accuracyScore || 0,
+          grammarScore: analysisData.grammarScore || 0,
+          vocabularyScore: analysisData.vocabularyScore || 0,
+          fluencyScore: analysisData.fluencyScore || 0,
+          feedback: analysisData.feedback || {
             accuracy: 0,
             strengths: [],
             improvements: [],
             alternatives: []
           },
-          corrections: responseData.corrections || undefined,
-          aiCoach: responseData.aiCoach || undefined,
-          grammarAnalysis: responseData.grammarAnalysis || undefined
+          corrections: analysisData.corrections || undefined,
+          aiCoach: analysisData.aiCoach || undefined,
+          grammarAnalysis: analysisData.grammarAnalysis || undefined
         };
         
         setFeedback(feedbackData);
@@ -614,7 +649,22 @@ export default function WritingScreen() {
             moveToNextSentence();
           }, 1500);
         } else {
-          Alert.alert('Needs Improvement', 'Translation needs improvement. Try again!');
+          // Create a detailed message with feedback
+          let feedbackMessage = 'Translation needs improvement. Try again!\n\n';
+          
+          if (feedbackData.feedback.improvements && feedbackData.feedback.improvements.length > 0) {
+            feedbackMessage += 'Areas for improvement:\n';
+            feedbackData.feedback.improvements.forEach((improvement, index) => {
+              feedbackMessage += `${index + 1}. ${improvement}\n`;
+            });
+          }
+          
+          if (feedbackData.corrections) {
+            feedbackMessage += `\nSuggested translation: ${feedbackData.corrections.suggestion}\n`;
+            feedbackMessage += `Explanation: ${feedbackData.corrections.explanation}\n`;
+          }
+          
+          Alert.alert('Needs Improvement', feedbackMessage);
         }
       } else {
         throw new Error(response.error || 'Failed to submit translation');
@@ -666,7 +716,9 @@ export default function WritingScreen() {
 
   // Submit creative writing (updated to handle offline mode and AI coach)
   const submitCreativeWriting = async () => {
+    console.log('submitCreativeWriting called');
     if (!userWriting.trim() || !currentSubmission || !currentExercise) {
+      console.log('Missing data for creative writing submission:', { userWriting: userWriting.trim(), currentSubmission, currentExercise });
       return;
     }
 
@@ -695,13 +747,15 @@ export default function WritingScreen() {
       if (response.success && response.data) {
         // Use the actual API response
         const responseData = response.data as any;
+        // Handle the actual response structure where feedback data is nested under 'analysis'
+        const analysisData = responseData.analysis || responseData;
         const feedbackData: FeedbackData = {
-          isCorrect: responseData.isCorrect || true,
-          accuracyScore: responseData.accuracyScore || Math.floor(Math.random() * 10) + 90, // 90-100
-          grammarScore: responseData.grammarScore || Math.floor(Math.random() * 15) + 80, // 80-95
-          vocabularyScore: responseData.vocabularyScore || Math.floor(Math.random() * 20) + 75, // 75-95
-          fluencyScore: responseData.fluencyScore || Math.floor(Math.random() * 15) + 80, // 80-95
-          feedback: responseData.feedback || {
+          isCorrect: analysisData.isCorrect || true,
+          accuracyScore: analysisData.accuracyScore || Math.floor(Math.random() * 10) + 90, // 90-100
+          grammarScore: analysisData.grammarScore || Math.floor(Math.random() * 15) + 80, // 80-95
+          vocabularyScore: analysisData.vocabularyScore || Math.floor(Math.random() * 20) + 75, // 75-95
+          fluencyScore: analysisData.fluencyScore || Math.floor(Math.random() * 15) + 80, // 80-95
+          feedback: analysisData.feedback || {
             accuracy: 95,
             strengths: [
               'Creative use of language',
@@ -717,8 +771,8 @@ export default function WritingScreen() {
               'Alternative phrasing 2'
             ]
           },
-          aiCoach: responseData.aiCoach || undefined,
-          grammarAnalysis: responseData.grammarAnalysis || undefined
+          aiCoach: analysisData.aiCoach || undefined,
+          grammarAnalysis: analysisData.grammarAnalysis || undefined
         };
         
         setFeedback(feedbackData);
@@ -1822,6 +1876,10 @@ export default function WritingScreen() {
                     <Text style={styles.sourceSentence}>{currentSentence.sourceText}</Text>
                     {currentSentence.context && (
                       <Text style={styles.sentenceContext}>{currentSentence.context}</Text>
+                    )}
+                    {/* Show exercise instructions if available */}
+                    {currentExercise.instructions && (
+                      <Text style={styles.sentenceContext}>{currentExercise.instructions}</Text>
                     )}
                   </View>
                 </>

@@ -318,8 +318,19 @@ export const learningApi = {
     console.log('Fetching writing exercises with params:', params);
     return apiClient.get('/writing/exercises', { params });
   },
-  submitWriting: (exerciseId: string, content: string, writingTime: number) =>
-    apiClient.post('/writing/submissions', { exerciseId, content, writingTime }),
+  submitWriting: (exerciseId: string, content: string, writingTime: number, sentenceId?: string) => {
+    // For translation exercises, we must have a valid sentenceId
+    if (sentenceId) {
+      const payload = { userTranslation: content, timeSpent: writingTime, sentenceId };
+      console.log('Submitting translation with payload:', { exerciseId, payload });
+      return apiClient.post(`/writing/exercises/${exerciseId}/submit`, payload);
+    } else {
+      // For creative writing exercises
+      const payload = { content: content, writingTime: writingTime };
+      console.log('Submitting creative writing with payload:', { exerciseId, payload });
+      return apiClient.post(`/writing/exercises/${exerciseId}/submit`, payload);
+    }
+  },
   getWritingSubmissions: () => 
     apiClient.get('/writing/submissions'),
   

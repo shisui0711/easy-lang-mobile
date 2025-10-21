@@ -16,9 +16,9 @@ export default function VocabularyScreen() {
   // Extended tabs for new features
   const extendedTabs = [
     { id: 'review', label: 'Review' },
-    { id: 'unified', label: 'Unified Practice' },
-    { id: 'offline', label: 'Offline Review' },
-    { id: 'flashcards', label: 'Flashcards' },
+    // { id: 'unified', label: 'Unified Practice' },
+    // { id: 'offline', label: 'Offline Review' },
+    // { id: 'flashcards', label: 'Flashcards' },
     { id: 'practice', label: 'Practice' },
     { id: 'manage', label: 'Manage' },
   ];
