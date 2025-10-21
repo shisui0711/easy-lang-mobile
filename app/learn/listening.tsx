@@ -24,6 +24,7 @@ interface ListeningExercise {
   audioUrl?: string;
   type: string;
   level: string;
+  accent?: string;
   duration?: number;
   estimatedTime: number;
   questions?: any[];
@@ -90,6 +91,7 @@ export default function ListeningScreen() {
   const [activeTab, setActiveTab] = useState<'practice' | 'listen' | 'progress'>('practice');
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
+  const [selectedAccent, setSelectedAccent] = useState<string>('all'); // Add accent filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [startTime, setStartTime] = useState<number | null>(null);
@@ -98,16 +100,28 @@ export default function ListeningScreen() {
   const [showResults, setShowResults] = useState(false)
   // New state for audio loading
   const [isAudioLoading, setIsAudioLoading] = useState(false)
+  const [selectedWord, setSelectedWord] = useState<string | null>(null); // State for selected word
+  const [wordDefinition, setWordDefinition] = useState<string | null>(null); // State for word definition
+  const [selectedSubtitleLanguage, setSelectedSubtitleLanguage] = useState<string>('en'); // State for subtitle language
+  const [subtitleContent, setSubtitleContent] = useState<Record<string, string>>({}); // State for subtitles in different languages
+  const [bookmarkedExercises, setBookmarkedExercises] = useState<Set<string>>(new Set()); // State for bookmarked exercises
+  const [recommendedExercises, setRecommendedExercises] = useState<ListeningExercise[]>([]); // State for recommended exercises
+
+  const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false); // State for bookmark filter
+  const [downloadedExercises, setDownloadedExercises] = useState<Set<string>>(new Set()); // State for downloaded exercises
+  const [isDownloading, setIsDownloading] = useState<Record<string, boolean>>({}); // State for download progress
+  const [userProficiency, setUserProficiency] = useState<string>('Intermediate'); // State for user proficiency level
 
   useEffect(() => {
     fetchExercises();
     fetchSubmissions();
+    fetchRecommendedExercises(); // Fetch recommendations on component mount
     return () => {
       if (sound) {
         sound.unloadAsync();
       }
     };
-  }, [selectedLevel, selectedType, searchQuery]);
+  }, [selectedLevel, selectedType, selectedAccent, searchQuery, userProficiency]);
 
   const fetchExercises = async () => {
     setIsLoading(true);
@@ -115,6 +129,9 @@ export default function ListeningScreen() {
       const params: any = {
         ...(selectedType !== 'all' && { type: selectedType }),
         ...(selectedLevel !== 'all' && { level: selectedLevel }),
+        ...(selectedAccent !== 'all' && { accent: selectedAccent }), // Add accent filter
+        // Filter exercises based on user proficiency level
+        ...(userProficiency && { userProficiency }),
         pageSize: 20,
       };
       
@@ -142,6 +159,49 @@ export default function ListeningScreen() {
       }
     } catch (error) {
       console.error('Failed to fetch submissions:', error);
+    }
+  };
+
+  // Mock function to fetch recommended exercises
+  const fetchRecommendedExercises = async () => {
+    try {
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      // Mock recommended exercises
+      const mockRecommendations = [
+        {
+          id: 'rec1',
+          title: 'Travel Conversations',
+          type: 'CONVERSATION',
+          level: 'Intermediate',
+          accent: 'American',
+          estimatedTime: 12,
+          description: 'Common phrases and expressions used during travel'
+        },
+        {
+          id: 'rec2',
+          title: 'Business English',
+          type: 'LECTURE',
+          level: 'Advanced',
+          accent: 'British',
+          estimatedTime: 15,
+          description: 'Professional vocabulary and expressions for business settings'
+        },
+        {
+          id: 'rec3',
+          title: 'Movie Dialogues',
+          type: 'PODCAST',
+          level: 'Intermediate',
+          accent: 'Australian',
+          estimatedTime: 10,
+          description: 'Popular movie quotes and dialogues for casual learning'
+        }
+      ];
+      
+      setRecommendedExercises(mockRecommendations);
+    } catch (error) {
+      console.error('Failed to fetch recommendations:', error);
     }
   };
 
@@ -237,6 +297,12 @@ export default function ListeningScreen() {
     setShowScript(false);
     setPosition(0);
     setIsPlaying(false);
+    setSelectedSubtitleLanguage('en'); // Reset to default language
+    
+    // Fetch subtitles for the exercise
+    if (exercise.id) {
+      await fetchSubtitles(exercise.id);
+    }
     
     // Generate audio from script if available
     if (exercise.audioScript) {
@@ -400,6 +466,160 @@ export default function ListeningScreen() {
     return '#EF4444'; // red
  };
 
+  const handleWordSelect = async (word: string) => {
+    setSelectedWord(word);
+    // In a real implementation, this would call an API to get the definition
+    // For now, we'll simulate with a mock definition
+    try {
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Mock definitions for common words
+      const mockDefinitions: Record<string, string> = {
+        'hello': 'A greeting or expression of goodwill.',
+        'world': 'The earth, together with all of its countries and peoples.',
+        'language': 'The method of human communication, either spoken or written.',
+        'learning': 'The acquisition of knowledge or skills through study, experience, or being taught.',
+        'practice': 'The actual application or use of an idea, belief, or method.',
+        'listen': 'To give one\'s attention to sound.',
+        'speak': 'To say words aloud.',
+        'understand': 'To perceive the intended meaning of words, language, or behavior.',
+        'improve': 'To make or become better.',
+        'skill': 'An ability to do an activity or job well, especially because you have practiced it.',
+        'vocabulary': 'The body of words used in a particular language.',
+        'exercise': 'An activity requiring physical effort, carried out to sustain or improve health and fitness.',
+        'comprehension': 'The ability to understand something.',
+        'pronunciation': 'The way in which a word is spoken.',
+        'accent': 'A distinctive mode of pronunciation of a language, associated with a particular region or social group.',
+        'conversation': 'A talk between two or more people in which thoughts, feelings, and ideas are expressed.',
+        'lecture': 'A talk given to an audience, especially to students in a university.',
+        'news': 'Newly received or noteworthy information, especially about recent events.',
+        'podcast': 'A digital audio file made available on the internet for downloading to a computer or mobile device.',
+        'book': 'A written or printed work consisting of pages glued or sewn together.',
+      };
+      
+      const normalizedWord = word.toLowerCase().replace(/[^\w]/g, '');
+      const definition = mockDefinitions[normalizedWord] || `Definition for "${word}" would appear here in a real implementation.`;
+      setWordDefinition(definition);
+    } catch (error) {
+      setWordDefinition(`Could not retrieve definition for "${word}".`);
+    }
+  };
+
+  const renderInteractiveTranscript = (transcript: string) => {
+    if (!transcript) return null;
+    
+    // Split transcript into words while preserving spaces and punctuation
+    const words = transcript.split(/(\s+)/).filter(word => word.length > 0);
+    
+    return (
+      <View style={styles.interactiveTranscriptContainer}>
+        {words.map((word, index) => {
+          // Check if it's a space or punctuation
+          if (/^\s+$/.test(word)) {
+            return <Text key={index} style={styles.transcriptText}>{word}</Text>;
+          }
+          
+          // Render clickable word
+          return (
+            <TouchableOpacity 
+              key={index} 
+              onPress={() => handleWordSelect(word)}
+              style={[
+                styles.wordContainer,
+                selectedWord === word && styles.selectedWord
+              ]}
+            >
+              <Text 
+                style={[
+                  styles.transcriptText,
+                  styles.interactiveWord,
+                  selectedWord === word && styles.selectedWordText
+                ]}
+              >
+                {word}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  };
+
+  // Simulate fetching subtitles in different languages
+  const fetchSubtitles = async (exerciseId: string) => {
+    // In a real implementation, this would call an API to get subtitles
+    // For now, we'll simulate with mock subtitles
+    try {
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Mock subtitles for different languages
+      const mockSubtitles: Record<string, string> = {
+        'en': 'Hello, welcome to our language learning app. Today we will practice listening skills.',
+        'es': 'Hola, bienvenido a nuestra aplicación de aprendizaje de idiomas. Hoy practicaremos habilidades de escucha.',
+        'fr': 'Bonjour, bienvenue dans notre application d\'apprentissage des langues. Aujourd\'hui, nous allons pratiquer les compétences d\'écoute.',
+        'de': 'Hallo, willkommen in unserer Sprachlern-App. Heute üben wir Hörfähigkeiten.',
+        'it': 'Ciao, benvenuto nella nostra app di apprendimento linguistico. Oggi eserciteremo le abilità di ascolto.',
+        'pt': 'Olá, bem-vindo ao nosso aplicativo de aprendizagem de idiomas. Hoje vamos praticar habilidades de escuta.',
+        'ru': 'Привет, добро пожаловать в наше приложение для изучения языков. Сегодня мы будем практиковать навыки аудирования.',
+        'zh': '你好，欢迎使用我们的语言学习应用程序。今天我们将 практикуем слушательные навыки.',
+        'ja': 'こんにちは、言語学習アプリへようこそ。今日はリスニングスキルを練習します。',
+        'ko': '안녕하세요, 우리 언어 학습 앱에 오신 것을 환영합니다. 오늘은 듣기 기술을 연습할 것입니다.',
+      };
+      
+      setSubtitleContent(mockSubtitles);
+    } catch (error) {
+      console.error('Failed to fetch subtitles:', error);
+    }
+  };
+
+  // Toggle bookmark for an exercise
+  const toggleBookmark = (exerciseId: string) => {
+    setBookmarkedExercises(prev => {
+      const newBookmarks = new Set(prev);
+      if (newBookmarks.has(exerciseId)) {
+        newBookmarks.delete(exerciseId);
+      } else {
+        newBookmarks.add(exerciseId);
+      }
+      // In a real implementation, this would be saved to persistent storage or backend
+      return newBookmarks;
+    });
+  };
+
+  // Check if an exercise is bookmarked
+  const isBookmarked = (exerciseId: string) => {
+    return bookmarkedExercises.has(exerciseId);
+  };
+
+  // Download exercise for offline use
+  const downloadExercise = async (exercise: ListeningExercise) => {
+    setIsDownloading(prev => ({ ...prev, [exercise.id]: true }));
+    
+    try {
+      // In a real implementation, this would download the audio file and transcript
+      // For now, we'll simulate with a delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Add to downloaded exercises set
+      setDownloadedExercises(prev => new Set(prev).add(exercise.id));
+      
+      // Show success message
+      Alert.alert('Success', `${exercise.title} has been downloaded for offline use.`);
+    } catch (error) {
+      console.error('Download failed:', error);
+      Alert.alert('Error', `Failed to download ${exercise.title}. Please try again.`);
+    } finally {
+      setIsDownloading(prev => ({ ...prev, [exercise.id]: false }));
+    }
+  };
+
+  // Check if an exercise is downloaded
+  const isDownloaded = (exerciseId: string) => {
+    return downloadedExercises.has(exerciseId);
+  };
+
   if (isLoading && activeTab === 'practice') {
     return (
       <SafeAreaView style={styles.container}>
@@ -490,6 +710,50 @@ export default function ListeningScreen() {
                     />
                   </View>
                 </View>
+                
+                <View style={styles.pickerContainer}>
+                  <Text style={styles.filterLabel}>Accent</Text>
+                  <View style={styles.pickerWrapper}>
+                    <RNPickerSelect
+                      onValueChange={setSelectedAccent}
+                      items={[
+                        { label: 'All Accents', value: 'all' },
+                        { label: 'American', value: 'American' },
+                        { label: 'British', value: 'British' },
+                        { label: 'Australian', value: 'Australian' },
+                        { label: 'Canadian', value: 'Canadian' },
+                        { label: 'Indian', value: 'Indian' },
+                        { label: 'Irish', value: 'Irish' },
+                        { label: 'Scottish', value: 'Scottish' },
+                      ]}
+                      style={pickerSelectStyles}
+                      value={selectedAccent}
+                      placeholder={{}}
+                    />
+                  </View>
+                </View>
+              </View>
+              
+              <View style={styles.filterRow}>
+                <View style={styles.pickerContainer}>
+                  <Text style={styles.filterLabel}>Your Proficiency</Text>
+                  <View style={styles.pickerWrapper}>
+                    <RNPickerSelect
+                      onValueChange={setUserProficiency}
+                      items={[
+                        { label: 'Beginner', value: 'Beginner' },
+                        { label: 'Elementary', value: 'Elementary' },
+                        { label: 'Intermediate', value: 'Intermediate' },
+                        { label: 'Upper Intermediate', value: 'Upper Intermediate' },
+                        { label: 'Advanced', value: 'Advanced' },
+                        { label: 'Proficient', value: 'Proficient' },
+                      ]}
+                      style={pickerSelectStyles}
+                      value={userProficiency}
+                      placeholder={{}}
+                    />
+                  </View>
+                </View>
               </View>
               
               <Input
@@ -498,11 +762,17 @@ export default function ListeningScreen() {
                 onChangeText={setSearchQuery}
                 style={styles.searchInput}
               />
+              <Button
+                title={showBookmarkedOnly ? "Show All Exercises" : "Show Bookmarked Only"}
+                onPress={() => setShowBookmarkedOnly(!showBookmarkedOnly)}
+                variant={showBookmarkedOnly ? "primary" : "outline"}
+                style={styles.bookmarkFilterButton}
+              />
             </View>
             
             {/* Exercise List */}
             <View style={styles.exercisesGrid}>
-              {exercises.map((exercise) => (
+              {(showBookmarkedOnly ? exercises.filter(ex => isBookmarked(ex.id)) : exercises).map((exercise) => (
                 <TouchableOpacity
                   key={exercise.id}
                   onPress={() => startListening(exercise)}
@@ -510,12 +780,48 @@ export default function ListeningScreen() {
                 >
                   <Card>
                     <CardContent style={styles.exerciseContent}>
-                      <View style={styles.exerciseHeader}>
+                      <View style={styles.exerciseHeaderTop}>
                         <Ionicons name="headset" size={32} color="#3B82F6" />
-                        <Text style={styles.levelText}>{exercise.level}</Text>
+                        <View style={styles.headerActions}>
+                          <Text style={styles.levelText}>{exercise.level}</Text>
+                          <TouchableOpacity 
+                            onPress={(e) => {
+                              e.stopPropagation(); // Prevent card selection when bookmarking
+                              toggleBookmark(exercise.id);
+                            }}
+                            style={styles.bookmarkButton}
+                          >
+                            <Ionicons 
+                              name={isBookmarked(exercise.id) ? "bookmark" : "bookmark-outline"} 
+                              size={24} 
+                              color={isBookmarked(exercise.id) ? "#3B82F6" : "#94A3B8"} 
+                            />
+                          </TouchableOpacity>
+                          <TouchableOpacity 
+                            onPress={(e) => {
+                              e.stopPropagation(); // Prevent card selection when downloading
+                              downloadExercise(exercise);
+                            }}
+                            style={styles.downloadButton}
+                            disabled={isDownloading[exercise.id] || isDownloaded(exercise.id)}
+                          >
+                            {isDownloading[exercise.id] ? (
+                              <ActivityIndicator size="small" color="#3B82F6" />
+                            ) : (
+                              <Ionicons 
+                                name={isDownloaded(exercise.id) ? "cloud-download" : "cloud-download-outline"} 
+                                size={24} 
+                                color={isDownloaded(exercise.id) ? "#10B981" : "#3B82F6"} 
+                              />
+                            )}
+                          </TouchableOpacity>
+                        </View>
                       </View>
                       <Text style={styles.exerciseTitle}>{exercise.title}</Text>
                       <Text style={styles.exerciseType}>{exercise.type.replace('_', ' ')}</Text>
+                      {exercise.accent && (
+                        <Text style={styles.exerciseAccent}>{exercise.accent} Accent</Text>
+                      )}
                       {exercise.topic && (
                         <Text style={styles.exerciseTopic}>{exercise.topic.name}</Text>
                       )}
@@ -532,6 +838,52 @@ export default function ListeningScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+            
+            {/* Community Recommendations */}
+            {recommendedExercises.length > 0 && (
+              <View style={styles.recommendationsSection}>
+                <View style={styles.recommendationsHeader}>
+                  <Text style={styles.sectionTitle}>Recommended for You</Text>
+                  <Text style={styles.recommendationsSubtitle}>
+                    Based on your learning activity
+                  </Text>
+                </View>
+                <View style={styles.recommendationsGrid}>
+                  {recommendedExercises.map((exercise) => (
+                    <TouchableOpacity
+                      key={exercise.id}
+                      onPress={() => startListening(exercise)}
+                      style={styles.recommendationCard}
+                    >
+                      <Card>
+                        <CardContent style={styles.recommendationContent}>
+                          <View style={styles.recommendationHeader}>
+                            <Ionicons name="people" size={20} color="#3B82F6" />
+                            <Text style={styles.recommendationLevel}>{exercise.level}</Text>
+                          </View>
+                          <Text style={styles.recommendationTitle} numberOfLines={2}>
+                            {exercise.title}
+                          </Text>
+                          <Text style={styles.recommendationType}>
+                            {exercise.type.replace('_', ' ')}
+                          </Text>
+                          {exercise.accent && (
+                            <Text style={styles.recommendationAccent}>
+                              {exercise.accent} Accent
+                            </Text>
+                          )}
+                          <View style={styles.recommendationFooter}>
+                            <Text style={styles.recommendationDuration}>
+                              {exercise.estimatedTime} min
+                            </Text>
+                          </View>
+                        </CardContent>
+                      </Card>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
           </View>
         )}
 
@@ -628,7 +980,7 @@ export default function ListeningScreen() {
                                 )}
                               </View>
                             </View>
-                          )
+                          );
                         })}
                       </View>
 
@@ -666,11 +1018,20 @@ export default function ListeningScreen() {
                 {!showResults && (
                   <Card style={styles.exerciseHeaderCard}>
                     <CardContent style={styles.exerciseHeaderContent}>
-                      <Text style={styles.exerciseTitle}>{selectedExercise.title}</Text>
+                      <View style={styles.exerciseHeaderTop}>
+                        <Text style={styles.exerciseTitle}>{selectedExercise.title}</Text>
+                        {isDownloaded(selectedExercise.id) && (
+                          <View style={styles.offlineBadge}>
+                            <Ionicons name="cloud-download" size={16} color="#FFFFFF" />
+                            <Text style={styles.offlineBadgeText}>Offline</Text>
+                          </View>
+                        )}
+                      </View>
                       <View style={styles.exerciseInfo}>
                         <Text style={styles.exerciseInfoText}>
                           {selectedExercise.topic?.name} • {selectedExercise.level} • 
                           {selectedExercise.estimatedTime} min
+                          {selectedExercise.accent && ` • ${selectedExercise.accent} Accent`}
                         </Text>
                         {startTime && (
                           <Text style={styles.timerText}>
@@ -767,12 +1128,39 @@ export default function ListeningScreen() {
                       
                       {/* Script Toggle */}
                       {selectedExercise.audioScript && (
-                        <Button
-                          title={showScript ? 'Hide Transcript' : 'Show Transcript'}
-                          variant="outline"
-                          onPress={() => setShowScript(!showScript)}
-                          style={styles.scriptButton}
-                        />
+                        <View style={styles.scriptControls}>
+                          <Button
+                            title={showScript ? 'Hide Transcript' : 'Show Transcript'}
+                            variant="outline"
+                            onPress={() => setShowScript(!showScript)}
+                            style={styles.scriptButton}
+                          />
+                          
+                          {/* Subtitle Language Selector */}
+                          {showScript && (
+                            <View style={styles.subtitleSelector}>
+                              <Text style={styles.subtitleLabel}>Subtitle Language:</Text>
+                              <RNPickerSelect
+                                onValueChange={setSelectedSubtitleLanguage}
+                                items={[
+                                  { label: 'English', value: 'en' },
+                                  { label: 'Spanish', value: 'es' },
+                                  { label: 'French', value: 'fr' },
+                                  { label: 'German', value: 'de' },
+                                  { label: 'Italian', value: 'it' },
+                                  { label: 'Portuguese', value: 'pt' },
+                                  { label: 'Russian', value: 'ru' },
+                                  { label: 'Chinese', value: 'zh' },
+                                  { label: 'Japanese', value: 'ja' },
+                                  { label: 'Korean', value: 'ko' },
+                                ]}
+                                style={pickerSelectStyles}
+                                value={selectedSubtitleLanguage}
+                                placeholder={{}}
+                              />
+                            </View>
+                          )}
+                        </View>
                       )}
                     </CardContent>
                   </Card>
@@ -783,9 +1171,25 @@ export default function ListeningScreen() {
                   <Card>
                     <CardContent style={styles.transcriptContent}>
                       <Text style={styles.transcriptTitle}>Transcript</Text>
-                      <Text style={styles.transcriptText}>
-                        {selectedExercise.audioScript}
-                      </Text>
+                      {renderInteractiveTranscript(subtitleContent[selectedSubtitleLanguage] || selectedExercise.audioScript)}
+                      
+                      {/* Word Definition Modal */}
+                      {selectedWord && wordDefinition && (
+                        <View style={styles.definitionModal}>
+                          <View style={styles.definitionContent}>
+                            <Text style={styles.definitionWord}>{selectedWord}</Text>
+                            <Text style={styles.definitionText}>{wordDefinition}</Text>
+                            <Button 
+                              title="Close" 
+                              onPress={() => {
+                                setSelectedWord(null);
+                                setWordDefinition(null);
+                              }} 
+                              style={styles.closeButton}
+                            />
+                          </View>
+                        </View>
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -906,6 +1310,89 @@ export default function ListeningScreen() {
         {/* Progress Tab */}
         {activeTab === 'progress' && (
           <View style={styles.section}>
+            {/* Downloaded Exercises */}
+            {downloadedExercises.size > 0 && (
+              <View style={styles.downloadedSection}>
+                <Text style={styles.sectionTitle}>Downloaded Exercises</Text>
+                <Text style={styles.downloadedDescription}>
+                  These exercises are available for offline practice
+                </Text>
+                <View style={styles.downloadedExercisesGrid}>
+                  {exercises.filter(ex => isDownloaded(ex.id)).map((exercise) => (
+                    <TouchableOpacity
+                      key={exercise.id}
+                      onPress={() => {
+                        setActiveTab('listen');
+                        startListening(exercise);
+                      }}
+                      style={styles.downloadedExerciseCard}
+                    >
+                      <Card>
+                        <CardContent style={styles.downloadedExerciseContent}>
+                          <View style={styles.downloadedExerciseHeader}>
+                            <Ionicons name="headset" size={24} color="#3B82F6" />
+                            <View style={styles.downloadedBadge}>
+                              <Text style={styles.downloadedBadgeText}>Offline</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.downloadedExerciseTitle} numberOfLines={2}>
+                            {exercise.title}
+                          </Text>
+                          <Text style={styles.downloadedExerciseType}>
+                            {exercise.type.replace('_', ' ')}
+                          </Text>
+                          {exercise.accent && (
+                            <Text style={styles.downloadedExerciseAccent}>
+                              {exercise.accent} Accent
+                            </Text>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+            
+            {/* Bookmarked Exercises */}
+            {bookmarkedExercises.size > 0 && (
+              <View style={styles.bookmarkedSection}>
+                <Text style={styles.sectionTitle}>Bookmarked Exercises</Text>
+                <View style={styles.bookmarkedExercisesGrid}>
+                  {exercises.filter(ex => isBookmarked(ex.id)).map((exercise) => (
+                    <TouchableOpacity
+                      key={exercise.id}
+                      onPress={() => {
+                        setActiveTab('listen');
+                        startListening(exercise);
+                      }}
+                      style={styles.bookmarkedExerciseCard}
+                    >
+                      <Card>
+                        <CardContent style={styles.bookmarkedExerciseContent}>
+                          <View style={styles.bookmarkedExerciseHeader}>
+                            <Ionicons name="headset" size={24} color="#3B82F6" />
+                            <Ionicons 
+                              name="bookmark" 
+                              size={20} 
+                              color="#3B82F6" 
+                            />
+                          </View>
+                          <Text style={styles.bookmarkedExerciseTitle} numberOfLines={2}>
+                            {exercise.title}
+                          </Text>
+                          <Text style={styles.bookmarkedExerciseType}>
+                            {exercise.type.replace('_', ' ')}
+                          </Text>
+                        </CardContent>
+                      </Card>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+            
+            {/* Previous Submissions */}
             {submissions.length > 0 ? (
               <View style={styles.submissionsContainer}>
                 {submissions.map((submission) => {
@@ -1103,6 +1590,9 @@ const styles = StyleSheet.create({
   searchInput: {
     marginBottom: 16,
   },
+  bookmarkFilterButton: {
+    marginBottom: 16,
+  },
   exercisesGrid: {
     gap: 16,
   },
@@ -1112,11 +1602,25 @@ const styles = StyleSheet.create({
   exerciseContent: {
     padding: 16,
   },
-  exerciseHeader: {
+  exerciseHeaderContent: {
+    padding: 16,
+  },
+  exerciseHeaderTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bookmarkButton: {
+    padding: 4,
+  },
+  downloadButton: {
+    padding: 4,
   },
   levelText: {
     fontSize: 14,
@@ -1132,6 +1636,12 @@ const styles = StyleSheet.create({
   exerciseType: {
     fontSize: 14,
     color: '#3B82F6',
+    marginBottom: 2,
+  },
+  exerciseAccent: {
+    fontSize: 12,
+    color: '#8B5CF6',
+    fontStyle: 'italic',
     marginBottom: 2,
   },
   exerciseTopic: {
@@ -1153,9 +1663,6 @@ const styles = StyleSheet.create({
   },
   exerciseHeaderCard: {
     backgroundColor: '#FFFFFF',
-  },
-  exerciseHeaderContent: {
-    padding: 16,
   },
   exerciseInfo: {
     flexDirection: 'row',
@@ -1257,6 +1764,18 @@ const styles = StyleSheet.create({
   scriptButton: {
     marginTop: 16,
   },
+  scriptControls: {
+    width: '100%',
+  },
+  subtitleSelector: {
+    marginTop: 16,
+  },
+  subtitleLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 8,
+  },
   transcriptContent: {
     padding: 16,
   },
@@ -1270,6 +1789,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1E293B',
     lineHeight: 20,
+  },
+  interactiveTranscriptContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  wordContainer: {
+    borderRadius: 4,
+  },
+  interactiveWord: {
+    textDecorationLine: 'underline',
+  },
+  selectedWord: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 4,
+  },
+  selectedWordText: {
+    color: '#FFFFFF',
   },
   questionsContent: {
     padding: 16,
@@ -1379,6 +1915,103 @@ const styles = StyleSheet.create({
   submissionsContainer: {
     gap: 16,
   },
+  bookmarkedSection: {
+    marginBottom: 24,
+  },
+  bookmarkedExercisesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  bookmarkedExerciseCard: {
+    width: '48%',
+    marginBottom: 8,
+  },
+  bookmarkedExerciseContent: {
+    padding: 12,
+  },
+  bookmarkedExerciseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  bookmarkedExerciseTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  bookmarkedExerciseType: {
+    fontSize: 12,
+    color: '#3B82F6',
+  },
+  downloadedSection: {
+    marginBottom: 24,
+  },
+  downloadedDescription: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 12,
+  },
+  downloadedExercisesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  downloadedExerciseCard: {
+    width: '48%',
+    marginBottom: 8,
+  },
+  downloadedExerciseContent: {
+    padding: 12,
+  },
+  downloadedExerciseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  downloadedBadge: {
+    backgroundColor: '#10B981',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  downloadedBadgeText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  downloadedExerciseTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  offlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#10B981',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  offlineBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  downloadedExerciseType: {
+    fontSize: 12,
+    color: '#3B82F6',
+    marginBottom: 2,
+  },
+  downloadedExerciseAccent: {
+    fontSize: 11,
+    color: '#8B5CF6',
+    fontStyle: 'italic',
+  },
   submissionCard: {
     backgroundColor: '#FFFFFF',
   },
@@ -1412,6 +2045,71 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     marginBottom: 16,
+  },
+  // Recommendations section styles
+  recommendationsSection: {
+    marginTop: 24,
+  },
+  recommendationsHeader: {
+    marginBottom: 16,
+  },
+  recommendationsSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  recommendationsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  recommendationCard: {
+    width: '48%',
+    marginBottom: 8,
+  },
+  recommendationContent: {
+    padding: 12,
+  },
+  recommendationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  recommendationLevel: {
+    fontSize: 12,
+    color: '#3B82F6',
+    fontWeight: '600',
+    backgroundColor: '#DBEAFE',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  recommendationTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  recommendationType: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 2,
+  },
+  recommendationAccent: {
+    fontSize: 11,
+    color: '#8B5CF6',
+    fontStyle: 'italic',
+    marginBottom: 4,
+  },
+  recommendationFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  recommendationDuration: {
+    fontSize: 12,
+    color: '#94A3B8',
   },
   scoresContainer: {
     flexDirection: 'row',
@@ -1601,6 +2299,40 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
     marginTop: 16,
+  },
+  closeButton: {
+    marginTop: 16,
+  },
+  definitionModal: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  definitionContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 16,
+    margin: 16,
+    maxWidth: '90%',
+  },
+  definitionWord: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  definitionText: {
+    fontSize: 16,
+    color: '#1E293B',
+    lineHeight: 22,
+    textAlign: 'center',
   },
 });
 

@@ -5,7 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 // Configure base URL - replace with your actual API URL
 // For mobile development, you'll need to use your machine's IP address
 // instead of localhost since localhost on mobile refers to the device itself
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.5:3000/api'; // Default to localhost for development
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'; // Default to localhost for development
 const BASE_CONFIG = {
       baseURL: BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL,
       timeout: 15000, // Increased timeout for mobile networks
@@ -143,6 +143,18 @@ class ApiClient {
   async put<T>(url: string, data?: any): Promise<ApiResponse<T>> {
     try {
       const response: AxiosResponse<T> = await this.client.put(url, data);
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      return this.handleError(error);
+    }
+  }
+
+  async patch<T>(url: string, data?: any): Promise<ApiResponse<T>> {
+    try {
+      const response: AxiosResponse<T> = await this.client.patch(url, data);
       return {
         success: true,
         data: response.data,
@@ -293,6 +305,8 @@ export const learningApi = {
   addVocabularyCard: (data: any) => apiClient.post('/vocabulary', data),
   updateVocabularyCard: (id: string, data: any) => apiClient.put(`/vocabulary/${id}`, data),
   deleteVocabularyCard: (id: string) => apiClient.delete(`/vocabulary/${id}`),
+  exportVocabulary: () => apiClient.patch('/vocabulary?action=export'),
+  importVocabulary: (data: any) => apiClient.put('/vocabulary?action=import', data),
   // Vocabulary practice APIs
   generatePracticeQuestions: (vocabularyCardId: string, count?: number) => 
     apiClient.post('/vocabulary/questions', { vocabularyCardId, count }),
@@ -426,6 +440,15 @@ export const aiApi = {
     previous_context?: Array<{ speaker: string; text: string }>;
   }) => apiClient.post('/ai/generate/speaking-response', data),
 
+  // Speech Analysis
+  analyzeSpeech: (data: {
+    audio_text: string;
+    reference_text?: string;
+    language?: string;
+    exercise_type?: string;
+    level?: string;
+  }) => apiClient.post('/ai/speech-analysis/analyze', data),
+
 };
 
 // Streak API functions
@@ -471,6 +494,7 @@ export const gamificationApi = {
   unlockAchievement: (userId: string, achievementId: string) => 
     apiClient.post(`/gamification/achievements/unlock`, { userId, achievementId }),
   getAllAchievements: () => apiClient.get('/gamification/achievements/all'),
+  checkAchievementsAfterVocabularyReview: () => apiClient.post('/gamification/achievements/after-vocabulary-review'),
   
   // Prestige Management
   getUserPrestige: (userId: string) => apiClient.get(`/gamification/prestige/user/${userId}`),

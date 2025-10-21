@@ -1,26 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View,
-  Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   Alert,
-  ActivityIndicator,
-  TextInput,
-  Platform,
   Animated,
   Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
 import { EncodingType, readAsStringAsync } from 'expo-file-system/legacy';
+import * as Speech from 'expo-speech'; // Add this import for TTS functionality
 
-import { Card, CardContent, Button } from '@/components/ui';
 import { learningApi, aiApi } from '@/lib/api';
-import { ApiResponse } from '@/types';
 
 // Import our new components
 import PracticeTab from '@/components/speaking/PracticeTab';
@@ -30,7 +21,7 @@ import TabNavigation from '@/components/speaking/TabNavigation';
 import LoadingComponent from '@/components/speaking/LoadingComponent';
 
 // Import types
-import { SpeakingScenario, Character, DialogueTurn, UserProgress, Feedback } from '../../types/speaking';
+import { SpeakingScenario, Character, DialogueTurn, UserProgress, Feedback, SpeechAnalysisResponse } from '../../types/speaking';
 
 function SpeakingScreen() {
   const [scenarios, setScenarios] = useState<SpeakingScenario[]>([]);
@@ -396,15 +387,22 @@ function SpeakingScreen() {
     setIsProcessing(true);
 
     try {
-      // Create mock feedback since we don't have the proper API endpoint
-      const mockFeedback: Feedback = {
-        grammar: ['Good sentence structure'],
-        vocabulary: ['Nice vocabulary choice'],
-        suggestions: ['Try to speak more clearly'],
-        score: 80
-      };
-
-      setFeedback(mockFeedback);
+      // Use the new generateDetailedFeedback function for more comprehensive feedback
+      if (selectedScenario) {
+        const newFeedback = await generateDetailedFeedback(userInput, selectedScenario);
+        setFeedback(newFeedback);
+        // Update learning modules with the user's input and feedback
+        await updateLearningModules(userInput, newFeedback);
+      } else {
+        // Fallback to mock feedback if no scenario is selected
+        const mockFeedback: Feedback = {
+          grammar: ['Good sentence structure'],
+          vocabulary: ['Nice vocabulary choice'],
+          suggestions: ['Try to speak more clearly'],
+          score: 80
+        };
+        setFeedback(mockFeedback);
+      }
     } catch (error) {
       handleApiError(error, 'getting feedback');
     } finally {
@@ -525,8 +523,8 @@ function SpeakingScreen() {
           selectedScenario?.id || '', 
           recordedUri
         );
-
-        Alert.alert('Success', 'Recording saved successfully!');
+        if(response.success) Alert.alert('Success', 'Recording saved successfully!');
+        else Alert.alert('Error', response.error || 'Failed to save recording');
       }
     } catch (error: any) {
       const errorMessage = handleApiError(error, 'saving recording');
@@ -636,49 +634,68 @@ function SpeakingScreen() {
     setDialogueHistory(prev => [...prev, newUserTurn]);
     
     try {
-      // In a real implementation, this would call the AI service for analysis
-      // For now, we'll simulate AI response and feedback using the real API
-      
       // Submit the user's response to the AI for analysis
-      // This would typically involve:
-      // 1. Converting speech to text (if using voice input)
-      // 2. Analyzing pronunciation, fluency, vocabulary, grammar
-
+      // This involves:
+      // 1. Converting speech to text (if using voice input) - already done
+      // 2. Analyzing pronunciation, fluency, vocabulary, grammar using the new speech analysis API
       // 3. Generating feedback and scores
       
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Call the new speech analysis API
+      const analysisResponse = await aiApi.analyzeSpeech({
+        audio_text: userInput,
+        reference_text: selectedScenario?.content || '',
+        language: 'en',
+        exercise_type: selectedScenario?.type || 'conversation',
+        level: selectedScenario?.level || 'intermediate'
+      });
       
       // Generate response based on scenario type
       let aiResponse: DialogueTurn | null = null;
       let newFeedback: Feedback | null = null;
       
-      // For demonstration, we'll create mock feedback based on the user's input
-
-      // In a real implementation, this would come from the AI analysis API
-      const grammarIssues = checkGrammar(userInput);
-      const suggestions = getSuggestions(userInput);
-      
-      // Calculate a mock score based on input quality
-      const wordCount = userInput.trim().split(/\s+/).length;
-      const hasPunctuation = /[.!?]/.test(userInput);
-      const hasCapitalization = /[A-Z]/.test(userInput);
-      const mockScore = Math.min(100, Math.max(30, 
-        (wordCount * 5) + 
-        (hasPunctuation ? 10 : 0) + 
-        (hasCapitalization ? 10 : 0) +
-        (grammarIssues.length === 0 ? 20 : 0)
-      ));
-      
-      newFeedback = {
-        grammar: grammarIssues.length > 0 ? grammarIssues : ['Good sentence structure'],
-        vocabulary: ['Nice vocabulary choice', 'Consider using more varied expressions'],
-        suggestions: suggestions,
-        score: mockScore
-      };
+      if (analysisResponse.success && analysisResponse.data) {
+        // Use real feedback from the AI analysis API
+        const analysisData = analysisResponse.data as SpeechAnalysisResponse;
+        
+        // Combine all suggestions from different analysis areas
+        const allSuggestions = [
+          ...analysisData.pronunciation.suggestions,
+          ...analysisData.fluency.suggestions,
+          ...analysisData.vocabulary.suggestions,
+          ...analysisData.grammar.suggestions
+        ];
+        
+        // Combine grammar feedback
+        const grammarFeedback = [
+          ...analysisData.grammar.errors.map((error) => error.message),
+          analysisData.grammar.feedback
+        ];
+        
+        // Combine vocabulary feedback
+        const vocabularyFeedback = [
+          analysisData.vocabulary.feedback,
+          ...(analysisData.vocabulary.advanced_words.length > 0 
+            ? [`You used advanced vocabulary: ${analysisData.vocabulary.advanced_words.join(', ')}`] 
+            : [])
+        ];
+        
+        newFeedback = {
+          grammar: grammarFeedback,
+          vocabulary: vocabularyFeedback,
+          suggestions: allSuggestions,
+          score: analysisData.overall_score
+        };
+      } else {
+        // Use the new generateDetailedFeedback function for more comprehensive feedback
+        // We can safely use the non-null assertion operator here because the guard clause
+        // at the beginning of the function ensures selectedScenario is not null
+        newFeedback = await generateDetailedFeedback(userInput, selectedScenario!);
+      }
       
       // Generate AI response based on scenario type using the new AI service
-      if (selectedScenario.type === 'conversation' || selectedScenario.type === 'roleplay') {
+      // We can safely access selectedScenario.type here because the guard clause
+      // at the beginning of the function ensures selectedScenario is not null
+      if (selectedScenario!.type === 'conversation' || selectedScenario!.type === 'roleplay') {
         const options = getBranchingOptions(selectedScenario.type, userInput);
         const aiText = await getAIResponse(selectedScenario.type, userInput);
         aiResponse = {
@@ -746,6 +763,8 @@ function SpeakingScreen() {
       
       if (newFeedback) {
         setFeedback(newFeedback);
+        // Update learning modules with the user's input and feedback
+        await updateLearningModules(userInput, newFeedback);
         // Trigger animation for feedback
         Animated.sequence([
           Animated.timing(animation, {
@@ -1048,12 +1067,39 @@ function SpeakingScreen() {
   };
 
   const handlePronunciationPlay = () => {
-    // In a real implementation, this would play TTS
-    Alert.alert(
-      'Pronunciation Guide', 
-      'In a real app, this would play the text-to-speech pronunciation with visual feedback on mouth shapes.',
-      [{ text: 'OK', style: 'default' }]
-    );
+    // Get the text to speak from the selected scenario
+    const textToSpeak = selectedScenario?.content || 'No text available for pronunciation.';
+    
+    // Check if text is available
+    if (!textToSpeak.trim()) {
+      Alert.alert('No Text', 'There is no text available to pronounce.');
+      return;
+    }
+    
+    // Configure TTS options
+    const options = {
+      language: 'en-US', // Default to English US
+      pitch: 1.0,        // Normal pitch
+      rate: 0.8,         // Slightly slower rate for clearer pronunciation
+      onStart: () => {
+        console.log('TTS started');
+      },
+      onDone: () => {
+        console.log('TTS finished');
+      },
+      onError: (error: any) => {
+        console.error('TTS error:', error);
+        Alert.alert('Error', 'Failed to play pronunciation.');
+      }
+    };
+    
+    // Speak the text
+    Speech.speak(textToSpeak, options);
+  };
+
+  const handleStopPronunciation = () => {
+    // Stop any ongoing speech
+    Speech.stop();
   };
 
   const renderMouthShape = (soundType: string) => {
@@ -1125,7 +1171,29 @@ function SpeakingScreen() {
     return issues;
   };
 
-  const generateDetailedFeedback = (userInput: string, scenario: SpeakingScenario): Feedback => {
+  // Function to fetch user's vocabulary words
+  const fetchUserVocabulary = async (): Promise<Array<{id: string, word: string}>> => {
+    try {
+      // Fetch the user's vocabulary cards
+      const response = await learningApi.getVocabularyCards({ pageSize: 100 });
+      
+      if (response.success && response.data) {
+        // Extract words and IDs from the vocabulary cards
+        const vocabularyCards = (response.data as any)?.data || [];
+        return vocabularyCards.map((card: any) => ({
+          id: card.id,
+          word: (card.word?.toLowerCase() || card.text?.toLowerCase() || '')
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching user vocabulary:', error);
+    }
+    
+    // Return empty array if fetch fails
+    return [];
+  };
+
+  const generateDetailedFeedback = async (userInput: string, scenario: SpeakingScenario): Promise<Feedback> => {
     const feedback: Feedback = {
       grammar: [],
       vocabulary: [],
@@ -1171,17 +1239,14 @@ function SpeakingScreen() {
     }
 
     // Integration with vocabulary module
-    // In a real implementation, this would check against the user's vocabulary learning progress
-    const vocabularyWords = ['elaborate', 'comprehensive', 'exceptional', 'extraordinary', 'fascinating'];
-    const knownWords = words.filter(word => vocabularyWords.includes(word));
+    // Fetch user's actual vocabulary words and check against them
+    const userVocabularyWords = await fetchUserVocabulary();
+    const knownWords = userVocabularyWords.filter(card => words.includes(card.word));
     
     if (knownWords.length > 0) {
-      feedback.vocabulary.push(`You used vocabulary words you've learned: ${knownWords.join(', ')}`);
+      feedback.vocabulary.push(`Great job using vocabulary words you've learned: ${knownWords.map(card => card.word).join(', ')}`);
     }
 
-    // Integration with grammar module
-    // In a real implementation, this would check against the user's grammar learning progress
-    const grammarPatterns = ['conditional', 'passive voice', 'complex sentence'];
     
     if (userInput.includes('if') && userInput.includes('would')) {
       feedback.grammar.push('Good use of conditional grammar pattern!');
@@ -1202,16 +1267,41 @@ function SpeakingScreen() {
   };
 
   // Function to update user progress in vocabulary and grammar modules
-  const updateLearningModules = (userInput: string, feedback: Feedback) => {
-    // In a real implementation, this would update the user's progress in vocabulary and grammar modules
+  const updateLearningModules = async (userInput: string, feedback: Feedback) => {
     console.log('Updating vocabulary and grammar modules with user input:', userInput);
     console.log('Feedback:', feedback);
     
-    // Example of how this might work:
-    // vocabularyApi.updateProgress(userInput, feedback.vocabulary);
-    // grammarApi.updateProgress(userInput, feedback.grammar);
+    // Extract words from user input
+    const words = userInput.toLowerCase().split(/\s+/);
+    
+    // Fetch user's vocabulary to find matching words
+    const userVocabularyWords = await fetchUserVocabulary();
+    const usedVocabularyCards = userVocabularyWords.filter(card => words.includes(card.word));
+    
+    // For each vocabulary word used, we update the user's progress
+    // 1. Find the specific vocabulary card IDs for these words
+    // 2. Submit ratings for those cards to advance their SRS schedule
+    // 3. Track usage statistics
+    
+    if (usedVocabularyCards.length > 0) {
+      console.log('User used vocabulary words:', usedVocabularyCards.map(card => card.word));
+      
+      // Submit a "Good" rating (3) for each vocabulary card used
+      for (const card of usedVocabularyCards) {
+        try {
+          await learningApi.submitVocabularyRating(card.id, 3);
+          console.log(`Submitted rating for vocabulary card: ${card.word}`);
+        } catch (error) {
+          console.error(`Failed to submit rating for vocabulary card: ${card.word}`, error);
+        }
+      }
+    }
+    
+    // Example of how this might work with grammar:
+    // if (feedback.grammar.some(item => item.includes('conditional'))) {
+    //   // Update grammar progress
+    // }
   };
-
 
   const getFeedbackColor = (score: number) => {
     if (score >= 90) return '#10B981'; // green-500

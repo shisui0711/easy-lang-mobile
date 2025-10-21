@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,15 +10,12 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { Audio } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 
 import { Progress, Button } from '@/components/ui';
-import { apiClient, learningApi, aiApi, gamificationApi } from '@/lib/api';
+import { apiClient, learningApi } from '@/lib/api';
 import { SimpleAddWordForm } from './SimpleAddWordForm';
-import { ProgressChart } from '@/components/vocabulary/ProgressChart';
-import { AchievementNotification } from '@/components/vocabulary/AchievementNotification';
-import eventEmitter from '@/lib/eventEmitter';
 
 interface VocabularyCard {
   id: string;
@@ -46,7 +43,7 @@ enum Rating {
   Easy = 4
 }
 
-export const ReviewSection = () => {
+export const OfflineReviewSection = () => {
   const [cards, setCards] = useState<VocabularyCard[]>([]);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -59,131 +56,166 @@ export const ReviewSection = () => {
   });
   const [showStats, setShowStats] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
-  const achievementNotificationRef = useRef<any>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'syncing'>('synced');
 
   useEffect(() => {
-    fetchReviewCards();
+    // Check network status
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected ?? false);
+    });
+
+    fetchOfflineReviewCards();
+    
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  const fetchReviewCards = async () => {
+  const fetchOfflineReviewCards = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await apiClient.get('/review');
-      if (response.success && response.data) {
-        setCards(response.data as VocabularyCard[] || []);
-        setCurrentCardIndex(0);
-        setShowAnswer(false);
+      // Try to get cards from AsyncStorage first
+      const storedCards = await AsyncStorage.getItem('offline_vocabulary_cards');
+      if (storedCards) {
+        setCards(JSON.parse(storedCards));
       } else {
-        setError(response.error || 'Failed to fetch vocabulary cards');
+        // If no stored cards, try to fetch from API and store locally
+        const response = await apiClient.get('/review');
+        if (response.success && response.data) {
+          const cardsData = response.data as VocabularyCard[] || [];
+          setCards(cardsData);
+          // Store in AsyncStorage for offline use
+          await AsyncStorage.setItem('offline_vocabulary_cards', JSON.stringify(cardsData));
+        } else {
+          setError(response.error || 'Failed to fetch vocabulary cards');
+        }
       }
+      
+      setCurrentCardIndex(0);
+      setShowAnswer(false);
     } catch (error: any) {
-      console.error('Failed to fetch cards:', error);
-      setError(error.message || 'Failed to load vocabulary cards. Please check your connection and try again.');
+      console.error('Failed to fetch offline review cards:', error);
+      setError(error.message || 'Failed to load offline review cards.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Play pronunciation using TTS
-  const playPronunciation = async (text: string) => {
-    if (!text) return;
-    
-    setIsPlayingAudio(true);
+  const syncOfflineData = async () => {
+    if (!isOnline) {
+      Alert.alert('No Internet Connection', 'Please connect to the internet to sync your data.');
+      return;
+    }
+
+    setSyncStatus('syncing');
     try {
-        const response = await aiApi.quickTTS({
-            text: text,
-            language: 'en',
-        });
-
-        if (!response.success) {
-        throw new Error(`Failed to generate audio: ${response.message}`);
-        }
-
-        const data = response.data as any;
-        const audioUrl = data.audioUrl;
-      const { sound } = await Audio.Sound.createAsync(
-          { uri: audioUrl },
-          { shouldPlay: true }
-        );
+      // Get pending ratings from AsyncStorage
+      const pendingRatings = await AsyncStorage.getItem('pending_vocabulary_ratings');
+      if (pendingRatings) {
+        const ratings = JSON.parse(pendingRatings);
         
-        // Play the sound
-        await sound.playAsync();
-        
-        // Clean up the sound object when playback finishes
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if (status.isLoaded && status.didJustFinish) {
-            sound.unloadAsync();
+        // Submit all pending ratings
+        for (const rating of ratings) {
+          try {
+            await learningApi.submitVocabularyRating(rating.wordId, rating.rating);
+          } catch (error) {
+            console.error('Failed to sync rating:', error);
+            // Keep this rating for next sync attempt
+            continue;
           }
-        });
-    } catch (err) {
-      console.error("Pronunciation failed:", err);
-      Alert.alert("Error", "Failed to play pronunciation. Please try again.");
-    } finally {
-      setIsPlayingAudio(false);
+        }
+        
+        // Clear pending ratings after successful sync
+        await AsyncStorage.removeItem('pending_vocabulary_ratings');
+        setSyncStatus('synced');
+        
+        Alert.alert('Success', 'Your offline data has been synced successfully!');
+      } else {
+        setSyncStatus('synced');
+      }
+    } catch (error: any) {
+      console.error('Failed to sync offline data:', error);
+      setSyncStatus('pending');
+      Alert.alert('Sync Failed', 'Failed to sync your data. Please try again later.');
     }
   };
 
-  const handleRatingSubmit = async (rating: Rating) => {
+  const storeOfflineRating = async (wordId: string, rating: Rating) => {
+    try {
+      // Get existing pending ratings
+      const pendingRatings = await AsyncStorage.getItem('pending_vocabulary_ratings');
+      const ratings = pendingRatings ? JSON.parse(pendingRatings) : [];
+      
+      // Add new rating
+      ratings.push({ wordId, rating, timestamp: Date.now() });
+      
+      // Store updated ratings
+      await AsyncStorage.setItem('pending_vocabulary_ratings', JSON.stringify(ratings));
+      setSyncStatus('pending');
+    } catch (error) {
+      console.error('Failed to store offline rating:', error);
+    }
+  };
+
+  const submitRating = async (rating: Rating) => {
     const currentCard = cards[currentCardIndex];
     if (!currentCard || isSubmitting) return;
 
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await learningApi.submitVocabularyRating(currentCard.wordId, rating);
-
-      if (response.success) {
-        // Update session stats
-        setSessionStats(prev => ({
-          ...prev,
-          total: prev.total + 1,
-          correct: rating === Rating.Good || rating === Rating.Easy ? prev.correct + 1 : prev.correct
-        }));
-
-        // Move to next card with animation
-        if (currentCardIndex < cards.length - 1) {
-          setIsAnimating(true);
-          setShowAnswer(false);
-          // Wait for animation to complete before changing cards
-          setTimeout(() => {
-            setCurrentCardIndex(currentCardIndex + 1);
-            setIsAnimating(false);
-          }, 300);
-        } else {
-          // Session complete
-          Alert.alert(
-            'Session Complete!',
-            `You reviewed ${cards.length} cards.\nAccuracy: ${sessionStats.total > 0 ? Math.round(((sessionStats.correct + (rating === Rating.Good || rating === Rating.Easy ? 1 : 0)) / (sessionStats.total + 1)) * 100) : 0}%`,
-            [
-              { text: 'Continue Learning', onPress: fetchReviewCards },
-              { text: 'Back to Learn', onPress: () => router.back() }
-            ]
-          );
+      if (isOnline) {
+        // Online mode - submit directly to API
+        const response = await learningApi.submitVocabularyRating(currentCard.wordId, rating);
+        
+        if (!response.success) {
+          throw new Error(response.error || 'Failed to submit rating');
         }
-
-        // Check for new achievements after completing a review
-        try {
-          const achievementResponse: any = await gamificationApi.checkAchievementsAfterVocabularyReview();
-          if (achievementResponse.success && achievementResponse.data && Array.isArray(achievementResponse.data.newAchievements) && achievementResponse.data.newAchievements.length > 0) {
-            // Show notification for each new achievement
-            achievementResponse.data.newAchievements.forEach((achievement: any) => {
-              // Emit event to notify the AchievementNotification component
-              eventEmitter.emit('achievementUnlocked', achievement);
-            });
-          }
-        } catch (achievementError) {
-          console.error('Failed to check achievements:', achievementError);
-        }
-
       } else {
-        setError(response.error || 'Failed to submit rating. Please try again.');
+        // Offline mode - store rating locally
+        await storeOfflineRating(currentCard.wordId, rating);
+      }
+
+      // Update session stats
+      setSessionStats(prev => ({
+        ...prev,
+        total: prev.total + 1,
+        correct: rating === Rating.Good || rating === Rating.Easy ? prev.correct + 1 : prev.correct
+      }));
+
+      // Move to next card with animation
+      if (currentCardIndex < cards.length - 1) {
+        setIsAnimating(true);
+        setShowAnswer(false);
+        // Wait for animation to complete before changing cards
+        setTimeout(() => {
+          setCurrentCardIndex(currentCardIndex + 1);
+          setIsAnimating(false);
+        }, 300);
+      } else {
+        // Session complete
+        Alert.alert(
+          'Session Complete!',
+          `You reviewed ${cards.length} cards.\nAccuracy: ${sessionStats.total > 0 ? Math.round(((sessionStats.correct + (rating === Rating.Good || rating === Rating.Easy ? 1 : 0)) / (sessionStats.total + 1)) * 100) : 0}%`,
+          [
+            { 
+              text: 'Continue Learning', 
+              onPress: () => {
+                if (isOnline) {
+                  fetchOfflineReviewCards();
+                }
+              }
+            },
+            { text: 'Back to Learn', onPress: () => {} }
+          ]
+        );
       }
     } catch (error: any) {
       console.error('Failed to submit rating:', error);
-      setError(error.message || 'Failed to submit rating. Please check your connection and try again.');
+      setError(error.message || 'Failed to submit rating. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -193,7 +225,7 @@ export const ReviewSection = () => {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3B82F6" />
-        <Text style={styles.loadingText}>Loading vocabulary cards...</Text>
+        <Text style={styles.loadingText}>Loading offline vocabulary cards...</Text>
       </View>
     );
   }
@@ -207,13 +239,7 @@ export const ReviewSection = () => {
         <View style={styles.errorActions}>
           <Button
             title="Try Again"
-            onPress={fetchReviewCards}
-            style={styles.errorButton}
-          />
-          <Button
-            title="Back to Learn"
-            variant="outline"
-            onPress={() => router.back()}
+            onPress={fetchOfflineReviewCards}
             style={styles.errorButton}
           />
         </View>
@@ -224,20 +250,22 @@ export const ReviewSection = () => {
   if (cards.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Ionicons name="checkmark-circle" size={80} color="#10B981" />
-        <Text style={styles.emptyTitle}>Great Work!</Text>
+        <Ionicons name="book-outline" size={80} color="#94A3B8" />
+        <Text style={styles.emptyTitle}>No Cards Available</Text>
         <Text style={styles.emptySubtitle}>
-          You&apos;ve completed all your vocabulary reviews for now.
+          Download vocabulary cards for offline review when you're online.
         </Text>
-        <Text style={styles.emptyHint}>
-          Come back later for more reviews!
-        </Text>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <Text style={styles.backButtonText}>Back to Learn</Text>
-        </TouchableOpacity>
+        {isOnline ? (
+          <Button
+            title="Download Cards"
+            onPress={fetchOfflineReviewCards}
+            style={styles.downloadButton}
+          />
+        ) : (
+          <Text style={styles.offlineHint}>
+            Please connect to the internet to download cards.
+          </Text>
+        )}
       </View>
     );
   }
@@ -247,11 +275,10 @@ export const ReviewSection = () => {
 
   return (
     <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-      <AchievementNotification />
       {/* Header with Progress */}
       <View style={styles.reviewHeader}>
         <View>
-          <Text style={styles.reviewTitle}>Vocabulary Review</Text>
+          <Text style={styles.reviewTitle}>Offline Vocabulary Review</Text>
           <Text style={styles.reviewSubtitle}>
             Card {currentCardIndex + 1} of {cards.length}
           </Text>
@@ -268,7 +295,24 @@ export const ReviewSection = () => {
         </View>
       </View>
 
-      <SimpleAddWordForm onWordAdded={fetchReviewCards} />
+      {/* Offline Status */}
+      <View style={styles.offlineStatusContainer}>
+        <View style={[styles.statusIndicator, isOnline ? styles.onlineIndicator : styles.offlineIndicator]} />
+        <Text style={styles.statusText}>
+          {isOnline ? 'Online Mode' : 'Offline Mode'}
+        </Text>
+        {syncStatus !== 'synced' && (
+          <TouchableOpacity 
+            style={styles.syncButton}
+            onPress={syncOfflineData}
+            disabled={syncStatus === 'syncing'}
+          >
+            <Text style={styles.syncButtonText}>
+              {syncStatus === 'syncing' ? 'Syncing...' : 'Sync Now'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* Error Banner */}
       {error && (
@@ -306,22 +350,9 @@ export const ReviewSection = () => {
                 <View style={styles.cardFront}>
                   <Text style={styles.wordText}>{currentCard.word.text}</Text>
                   {currentCard.word.pronunciation && (
-                    <View style={styles.pronunciationContainer}>
-                      <Text style={styles.pronunciationText}>
-                        /{currentCard.word.pronunciation}/
-                      </Text>
-                      <TouchableOpacity 
-                        onPress={() => playPronunciation(currentCard.word.text)}
-                        disabled={isPlayingAudio}
-                        style={styles.audioButton}
-                      >
-                        {isPlayingAudio ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <Ionicons name="volume-high" size={20} color="#FFFFFF" />
-                        )}
-                      </TouchableOpacity>
-                    </View>
+                    <Text style={styles.pronunciationText}>
+                      /{currentCard.word.pronunciation}/
+                    </Text>
                   )}
                   {currentCard.word.partOfSpeech && (
                     <Text style={styles.partOfSpeechText}>
@@ -362,7 +393,7 @@ export const ReviewSection = () => {
           <Text style={styles.ratingTitle}>How well did you remember this word?</Text>
           <View style={styles.ratingButtons}>
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Again)}
+              onPress={() => submitRating(Rating.Again)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.againButton]}
             >
@@ -372,7 +403,7 @@ export const ReviewSection = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Hard)}
+              onPress={() => submitRating(Rating.Hard)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.hardButton]}
             >
@@ -382,7 +413,7 @@ export const ReviewSection = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Good)}
+              onPress={() => submitRating(Rating.Good)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.goodButton]}
             >
@@ -392,7 +423,7 @@ export const ReviewSection = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Easy)}
+              onPress={() => submitRating(Rating.Easy)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.easyButton]}
             >
@@ -432,9 +463,6 @@ export const ReviewSection = () => {
           </View>
         </View>
       )}
-      
-      {/* Progress Charts */}
-      <ProgressChart />
     </ScrollView>
   );
 };
@@ -487,7 +515,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   emptyTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#1E293B',
     marginTop: 16,
@@ -497,24 +525,15 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
     marginTop: 8,
+    marginBottom: 24,
   },
-  emptyHint: {
+  offlineHint: {
     fontSize: 14,
-    color: '#10B981',
+    color: '#F59E0B',
     fontWeight: '600',
-    marginTop: 8,
   },
-  backButton: {
-    marginTop: 24,
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    backgroundColor: '#3B82F6',
-    borderRadius: 12,
-  },
-  backButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+  downloadButton: {
+    width: '80%',
   },
   reviewHeader: {
     flexDirection: 'row',
@@ -524,12 +543,12 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   reviewTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#1E293B',
   },
   reviewSubtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#64748B',
     marginTop: 4,
   },
@@ -537,13 +556,56 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   progressText: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#1E293B',
     marginBottom: 4,
   },
   progressBar: {
-    width: 80,
+    width: 60,
+  },
+  offlineStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 24,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  statusIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  onlineIndicator: {
+    backgroundColor: '#10B981',
+  },
+  offlineIndicator: {
+    backgroundColor: '#F59E0B',
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    flex: 1,
+  },
+  syncButton: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  syncButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
   errorBanner: {
     backgroundColor: '#FEF2F2',
@@ -599,19 +661,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
   },
-  pronunciationContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
   pronunciationText: {
     fontSize: 18,
     color: 'rgba(255, 255, 255, 0.9)',
     fontStyle: 'italic',
-    marginRight: 12,
-  },
-  audioButton: {
-    padding: 8,
+    marginBottom: 8,
   },
   partOfSpeechText: {
     fontSize: 14,
@@ -662,7 +716,7 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   ratingTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#1E293B',
     textAlign: 'center',

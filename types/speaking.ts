@@ -55,6 +55,47 @@ export interface UserProgress {
   };
 }
 
+export interface PronunciationFeedback {
+  score: number;
+  feedback: string;
+  suggestions: string[];
+}
+
+export interface FluencyFeedback {
+  score: number;
+  feedback: string;
+  suggestions: string[];
+}
+
+export interface VocabularyFeedback {
+  score: number;
+  feedback: string;
+  suggestions: string[];
+  advanced_words: string[];
+}
+
+export interface GrammarError {
+  type: string;
+  message: string;
+  sentence?: string;
+}
+
+export interface GrammarFeedback {
+  score: number;
+  feedback: string;
+  errors: GrammarError[];
+  suggestions: string[];
+}
+
+export interface SpeechAnalysisResponse {
+  pronunciation: PronunciationFeedback;
+  fluency: FluencyFeedback;
+  vocabulary: VocabularyFeedback;
+  grammar: GrammarFeedback;
+  overall_score: number;
+  feedback: string;
+}
+
 export interface Feedback {
   grammar: string[];
   vocabulary: string[];

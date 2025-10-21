@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,11 +14,10 @@ import { router } from 'expo-router';
 import { Audio } from 'expo-av';
 
 import { Progress, Button } from '@/components/ui';
-import { apiClient, learningApi, aiApi, gamificationApi } from '@/lib/api';
+import { apiClient, learningApi, aiApi } from '@/lib/api';
 import { SimpleAddWordForm } from './SimpleAddWordForm';
 import { ProgressChart } from '@/components/vocabulary/ProgressChart';
 import { AchievementNotification } from '@/components/vocabulary/AchievementNotification';
-import eventEmitter from '@/lib/eventEmitter';
 
 interface VocabularyCard {
   id: string;
@@ -38,6 +37,16 @@ interface VocabularyCard {
   };
 }
 
+interface Exercise {
+  id: string;
+  type: 'vocabulary' | 'writing' | 'speaking';
+  title: string;
+  description?: string;
+  difficulty: string;
+  estimatedTime: number;
+  progress?: number;
+}
+
 enum Rating {
   Manual = 0,
   Again = 1,
@@ -46,9 +55,10 @@ enum Rating {
   Easy = 4
 }
 
-export const ReviewSection = () => {
+export const UnifiedReviewSection = () => {
   const [cards, setCards] = useState<VocabularyCard[]>([]);
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [currentItemIndex, setCurrentItemIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,27 +71,66 @@ export const ReviewSection = () => {
   const [error, setError] = useState<string | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
-  const achievementNotificationRef = useRef<any>(null);
+  const [mode, setMode] = useState<'vocabulary' | 'mixed'>('mixed'); // 'vocabulary' or 'mixed' (includes writing/speaking)
 
   useEffect(() => {
-    fetchReviewCards();
-  }, []);
+    fetchReviewItems();
+  }, [mode]);
 
-  const fetchReviewCards = async () => {
+  const fetchReviewItems = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await apiClient.get('/review');
-      if (response.success && response.data) {
-        setCards(response.data as VocabularyCard[] || []);
-        setCurrentCardIndex(0);
-        setShowAnswer(false);
+      if (mode === 'vocabulary') {
+        // Fetch vocabulary cards only
+        const response = await apiClient.get('/review');
+        if (response.success && response.data) {
+          setCards(response.data as VocabularyCard[] || []);
+          setExercises([]); // Clear exercises
+        } else {
+          setError(response.error || 'Failed to fetch vocabulary cards');
+        }
       } else {
-        setError(response.error || 'Failed to fetch vocabulary cards');
+        // Fetch mixed review items (vocabulary + exercises)
+        const vocabResponse = await apiClient.get('/review');
+        const writingResponse = await learningApi.getWritingExercises({ pageSize: 5 });
+        const speakingResponse = await learningApi.getSpeakingExercises({ pageSize: 5 });
+        
+        const vocabCards = vocabResponse.success ? (vocabResponse.data as VocabularyCard[] || []) : [];
+        const writingExercises = writingResponse.success ? (writingResponse.data as any)?.data || [] : [];
+        const speakingExercises = speakingResponse.success ? (speakingResponse.data as any)?.data || [] : [];
+        
+        // Combine all items into a single array
+        const allItems: any[] = [
+          ...vocabCards.map(card => ({ ...card, type: 'vocabulary' })),
+          ...writingExercises.map((ex: any) => ({ ...ex, type: 'writing' })),
+          ...speakingExercises.map((ex: any) => ({ ...ex, type: 'speaking' }))
+        ];
+        
+        // Shuffle the items
+        const shuffledItems = [...allItems].sort(() => Math.random() - 0.5);
+        
+        // Separate back into cards and exercises
+        const combinedCards = shuffledItems.filter(item => item.type === 'vocabulary') as VocabularyCard[];
+        const combinedExercises = shuffledItems.filter(item => item.type !== 'vocabulary').map(item => ({
+          id: item.id,
+          type: item.type,
+          title: item.title,
+          description: item.description || item.instructions,
+          difficulty: item.difficulty || item.level,
+          estimatedTime: item.estimatedTime || 5,
+          progress: 0
+        })) as Exercise[];
+        
+        setCards(combinedCards);
+        setExercises(combinedExercises);
       }
+      
+      setCurrentItemIndex(0);
+      setShowAnswer(false);
     } catch (error: any) {
-      console.error('Failed to fetch cards:', error);
-      setError(error.message || 'Failed to load vocabulary cards. Please check your connection and try again.');
+      console.error('Failed to fetch review items:', error);
+      setError(error.message || 'Failed to load review items. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -126,8 +175,8 @@ export const ReviewSection = () => {
     }
   };
 
-  const handleRatingSubmit = async (rating: Rating) => {
-    const currentCard = cards[currentCardIndex];
+  const submitRating = async (rating: Rating) => {
+    const currentCard = cards[currentItemIndex];
     if (!currentCard || isSubmitting) return;
 
     setIsSubmitting(true);
@@ -144,39 +193,28 @@ export const ReviewSection = () => {
         }));
 
         // Move to next card with animation
-        if (currentCardIndex < cards.length - 1) {
+        if (currentItemIndex < cards.length - 1) {
           setIsAnimating(true);
           setShowAnswer(false);
           // Wait for animation to complete before changing cards
           setTimeout(() => {
-            setCurrentCardIndex(currentCardIndex + 1);
+            setCurrentItemIndex(currentItemIndex + 1);
             setIsAnimating(false);
           }, 300);
         } else {
           // Session complete
           Alert.alert(
             'Session Complete!',
-            `You reviewed ${cards.length} cards.\nAccuracy: ${sessionStats.total > 0 ? Math.round(((sessionStats.correct + (rating === Rating.Good || rating === Rating.Easy ? 1 : 0)) / (sessionStats.total + 1)) * 100) : 0}%`,
+            `You reviewed ${cards.length} items.\nAccuracy: ${sessionStats.total > 0 ? Math.round(((sessionStats.correct + (rating === Rating.Good || rating === Rating.Easy ? 1 : 0)) / (sessionStats.total + 1)) * 100) : 0}%`,
             [
-              { text: 'Continue Learning', onPress: fetchReviewCards },
+              { text: 'Continue Learning', onPress: fetchReviewItems },
               { text: 'Back to Learn', onPress: () => router.back() }
             ]
           );
         }
 
         // Check for new achievements after completing a review
-        try {
-          const achievementResponse: any = await gamificationApi.checkAchievementsAfterVocabularyReview();
-          if (achievementResponse.success && achievementResponse.data && Array.isArray(achievementResponse.data.newAchievements) && achievementResponse.data.newAchievements.length > 0) {
-            // Show notification for each new achievement
-            achievementResponse.data.newAchievements.forEach((achievement: any) => {
-              // Emit event to notify the AchievementNotification component
-              eventEmitter.emit('achievementUnlocked', achievement);
-            });
-          }
-        } catch (achievementError) {
-          console.error('Failed to check achievements:', achievementError);
-        }
+        console.log('Checking for new achievements after vocabulary review');
 
       } else {
         setError(response.error || 'Failed to submit rating. Please try again.');
@@ -189,11 +227,25 @@ export const ReviewSection = () => {
     }
   };
 
+  const startExercise = (exercise: Exercise) => {
+    // Navigate to the appropriate exercise screen based on type
+    switch (exercise.type) {
+      case 'writing':
+        router.push(`/learn/writing?id=${exercise.id}`);
+        break;
+      case 'speaking':
+        router.push(`/learn/speaking?id=${exercise.id}`);
+        break;
+      default:
+        console.warn('Unknown exercise type:', exercise.type);
+    }
+  };
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3B82F6" />
-        <Text style={styles.loadingText}>Loading vocabulary cards...</Text>
+        <Text style={styles.loadingText}>Loading review items...</Text>
       </View>
     );
   }
@@ -207,7 +259,7 @@ export const ReviewSection = () => {
         <View style={styles.errorActions}>
           <Button
             title="Try Again"
-            onPress={fetchReviewCards}
+            onPress={fetchReviewItems}
             style={styles.errorButton}
           />
           <Button
@@ -221,13 +273,50 @@ export const ReviewSection = () => {
     );
   }
 
-  if (cards.length === 0) {
+  // Show mode selection if no items
+  if (cards.length === 0 && exercises.length === 0) {
+    return (
+      <View style={styles.modeSelectionContainer}>
+        <Text style={styles.modeTitle}>Choose Review Mode</Text>
+        <Text style={styles.modeSubtitle}>Select how you'd like to review your vocabulary</Text>
+        
+        <View style={styles.modeOptions}>
+          <TouchableOpacity 
+            style={[styles.modeOption, mode === 'vocabulary' && styles.selectedMode]}
+            onPress={() => setMode('vocabulary')}
+          >
+            <Ionicons name="book" size={32} color="#3B82F6" />
+            <Text style={styles.modeOptionTitle}>Vocabulary Only</Text>
+            <Text style={styles.modeOptionDescription}>Traditional flashcard review</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.modeOption, mode === 'mixed' && styles.selectedMode]}
+            onPress={() => setMode('mixed')}
+          >
+            <Ionicons name="layers" size={32} color="#10B981" />
+            <Text style={styles.modeOptionTitle}>Mixed Practice</Text>
+            <Text style={styles.modeOptionDescription}>Vocabulary + Writing + Speaking</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <Button
+          title="Start Review"
+          onPress={fetchReviewItems}
+          style={styles.startButton}
+        />
+      </View>
+    );
+  }
+
+  // Show empty state if no items to review
+  if (cards.length === 0 && exercises.length === 0) {
     return (
       <View style={styles.emptyContainer}>
         <Ionicons name="checkmark-circle" size={80} color="#10B981" />
         <Text style={styles.emptyTitle}>Great Work!</Text>
         <Text style={styles.emptySubtitle}>
-          You&apos;ve completed all your vocabulary reviews for now.
+          You've completed all your reviews for now.
         </Text>
         <Text style={styles.emptyHint}>
           Come back later for more reviews!
@@ -242,18 +331,21 @@ export const ReviewSection = () => {
     );
   }
 
-  const currentCard = cards[currentCardIndex];
-  const progressPercentage = ((currentCardIndex + 1) / cards.length) * 100;
+  const currentItem = cards[currentItemIndex];
+  const progressPercentage = cards.length > 0 
+    ? ((currentItemIndex + 1) / cards.length) * 100 
+    : 0;
 
   return (
     <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
       <AchievementNotification />
+      
       {/* Header with Progress */}
       <View style={styles.reviewHeader}>
         <View>
-          <Text style={styles.reviewTitle}>Vocabulary Review</Text>
+          <Text style={styles.reviewTitle}>Unified Review</Text>
           <Text style={styles.reviewSubtitle}>
-            Card {currentCardIndex + 1} of {cards.length}
+            Item {currentItemIndex + 1} of {cards.length + exercises.length}
           </Text>
         </View>
         <View style={styles.progressContainer}>
@@ -268,7 +360,23 @@ export const ReviewSection = () => {
         </View>
       </View>
 
-      <SimpleAddWordForm onWordAdded={fetchReviewCards} />
+      {/* Mode Toggle */}
+      <View style={styles.modeToggleContainer}>
+        <TouchableOpacity 
+          style={[styles.modeToggle, mode === 'vocabulary' && styles.activeMode]}
+          onPress={() => setMode('vocabulary')}
+        >
+          <Text style={[styles.modeToggleText, mode === 'vocabulary' && styles.activeModeText]}>Vocabulary</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.modeToggle, mode === 'mixed' && styles.activeMode]}
+          onPress={() => setMode('mixed')}
+        >
+          <Text style={[styles.modeToggleText, mode === 'mixed' && styles.activeModeText]}>Mixed Practice</Text>
+        </TouchableOpacity>
+      </View>
+
+      <SimpleAddWordForm onWordAdded={fetchReviewItems} />
 
       {/* Error Banner */}
       {error && (
@@ -283,86 +391,118 @@ export const ReviewSection = () => {
         </View>
       )}
 
-      {/* Vocabulary Card with Flip Animation */}
-      <View style={styles.cardContainer}>
-        <TouchableOpacity
-          onPress={() => {
-            if (!showAnswer) {
-              setIsAnimating(true);
-              setTimeout(() => {
-                setShowAnswer(true);
-                setIsAnimating(false);
-              }, 50);
-            }
-          }}
-          disabled={showAnswer || isAnimating}
-        >
-          <LinearGradient
-            colors={['#3B82F6', '#6366F1']}
-            style={styles.vocabularyCard}
+      {/* Current Item Display */}
+      {currentItem && (
+        <View style={styles.cardContainer}>
+          <TouchableOpacity
+            onPress={() => {
+              if (!showAnswer) {
+                setIsAnimating(true);
+                setTimeout(() => {
+                  setShowAnswer(true);
+                  setIsAnimating(false);
+                }, 50);
+              }
+            }}
+            disabled={showAnswer || isAnimating}
           >
-            <View style={styles.cardContent}>
-              {!showAnswer ? (
-                <View style={styles.cardFront}>
-                  <Text style={styles.wordText}>{currentCard.word.text}</Text>
-                  {currentCard.word.pronunciation && (
-                    <View style={styles.pronunciationContainer}>
-                      <Text style={styles.pronunciationText}>
-                        /{currentCard.word.pronunciation}/
-                      </Text>
-                      <TouchableOpacity 
-                        onPress={() => playPronunciation(currentCard.word.text)}
-                        disabled={isPlayingAudio}
-                        style={styles.audioButton}
-                      >
-                        {isPlayingAudio ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <Ionicons name="volume-high" size={20} color="#FFFFFF" />
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  {currentCard.word.partOfSpeech && (
-                    <Text style={styles.partOfSpeechText}>
-                      {currentCard.word.partOfSpeech}
-                    </Text>
-                  )}
-                  <View style={styles.tapHint}>
-                    <Ionicons name="finger-print" size={24} color="rgba(255, 255, 255, 0.8)" />
-                    <Text style={styles.tapHintText}>Tap to reveal meaning</Text>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.cardBack}>
-                  <Text style={styles.meaningText}>{currentCard.word.meaning}</Text>
-                  {currentCard.word.translation && (
-                    <Text style={styles.translationText}>{currentCard.word.translation}</Text>
-                  )}
-                  {currentCard.word.examples && currentCard.word.examples.length > 0 && (
-                    <View style={styles.examplesContainer}>
-                      <Text style={styles.examplesTitle}>Examples:</Text>
-                      {currentCard.word.examples.slice(0, 2).map((example, index) => (
-                        <Text key={index} style={styles.exampleText}>
-                          • {example}
+            <LinearGradient
+              colors={['#3B82F6', '#6366F1']}
+              style={styles.vocabularyCard}
+            >
+              <View style={styles.cardContent}>
+                {!showAnswer ? (
+                  <View style={styles.cardFront}>
+                    <Text style={styles.wordText}>{currentItem.word.text}</Text>
+                    {currentItem.word.pronunciation && (
+                      <View style={styles.pronunciationContainer}>
+                        <Text style={styles.pronunciationText}>
+                          /{currentItem.word.pronunciation}/
                         </Text>
-                      ))}
+                        <TouchableOpacity 
+                          onPress={() => playPronunciation(currentItem.word.text)}
+                          disabled={isPlayingAudio}
+                          style={styles.audioButton}
+                        >
+                          {isPlayingAudio ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Ionicons name="volume-high" size={20} color="#FFFFFF" />
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {currentItem.word.partOfSpeech && (
+                      <Text style={styles.partOfSpeechText}>
+                        {currentItem.word.partOfSpeech}
+                      </Text>
+                    )}
+                    <View style={styles.tapHint}>
+                      <Ionicons name="finger-print" size={24} color="rgba(255, 255, 255, 0.8)" />
+                      <Text style={styles.tapHintText}>Tap to reveal meaning</Text>
                     </View>
-                  )}
-                </View>
-              )}
+                  </View>
+                ) : (
+                  <View style={styles.cardBack}>
+                    <Text style={styles.meaningText}>{currentItem.word.meaning}</Text>
+                    {currentItem.word.translation && (
+                      <Text style={styles.translationText}>{currentItem.word.translation}</Text>
+                    )}
+                    {currentItem.word.examples && currentItem.word.examples.length > 0 && (
+                      <View style={styles.examplesContainer}>
+                        <Text style={styles.examplesTitle}>Examples:</Text>
+                        {currentItem.word.examples.slice(0, 2).map((example, index) => (
+                          <Text key={index} style={styles.exampleText}>
+                            • {example}
+                          </Text>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Exercise Display */}
+      {exercises.length > 0 && currentItemIndex >= cards.length && (
+        <View style={styles.exerciseContainer}>
+          <LinearGradient
+            colors={['#10B981', '#3B82F6']}
+            style={styles.exerciseCard}
+          >
+            <View style={styles.exerciseContent}>
+              <Text style={styles.exerciseTitle}>Practice Exercise</Text>
+              <Text style={styles.exerciseDescription}>
+                {exercises[currentItemIndex - cards.length]?.title}
+              </Text>
+              <View style={styles.exerciseMeta}>
+                <Text style={styles.exerciseType}>
+                  {exercises[currentItemIndex - cards.length]?.type?.toUpperCase()}
+                </Text>
+                <Text style={styles.exerciseTime}>
+                  {exercises[currentItemIndex - cards.length]?.estimatedTime} min
+                </Text>
+              </View>
+              <Button
+                title="Start Exercise"
+                onPress={() => startExercise(exercises[currentItemIndex - cards.length])}
+                style={styles.startExerciseButton}
+              />
             </View>
           </LinearGradient>
-        </TouchableOpacity>
-      </View>
+        </View>
+      )}
 
-      {/* Rating Buttons */}
-      {showAnswer && (
+      {/* Rating Buttons (for vocabulary items) */}
+      {currentItem && showAnswer && (
         <View style={styles.ratingContainer}>
           <Text style={styles.ratingTitle}>How well did you remember this word?</Text>
           <View style={styles.ratingButtons}>
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Again)}
+              onPress={() => submitRating(Rating.Again)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.againButton]}
             >
@@ -372,7 +512,7 @@ export const ReviewSection = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Hard)}
+              onPress={() => submitRating(Rating.Hard)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.hardButton]}
             >
@@ -382,7 +522,7 @@ export const ReviewSection = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Good)}
+              onPress={() => submitRating(Rating.Good)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.goodButton]}
             >
@@ -392,7 +532,7 @@ export const ReviewSection = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => handleRatingSubmit(Rating.Easy)}
+              onPress={() => submitRating(Rating.Easy)}
               disabled={isSubmitting}
               style={[styles.ratingButton, styles.easyButton]}
             >
@@ -422,7 +562,7 @@ export const ReviewSection = () => {
               <Text style={styles.sessionStatLabel}>Reviewed</Text>
             </View>
             <View style={styles.sessionStatItem}>
-              <Text style={styles.sessionStatValue}>{cards.length - currentCardIndex - 1}</Text>
+              <Text style={styles.sessionStatValue}>{cards.length + exercises.length - currentItemIndex - 1}</Text>
               <Text style={styles.sessionStatLabel}>Remaining</Text>
             </View>
             <View style={styles.sessionStatItem}>
@@ -479,6 +619,59 @@ const styles = StyleSheet.create({
   },
   errorButton: {
     flex: 1,
+  },
+  modeSelectionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modeTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 8,
+  },
+  modeSubtitle: {
+    fontSize: 16,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 32,
+  },
+  modeOptions: {
+    width: '100%',
+    marginBottom: 32,
+  },
+  modeOption: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 24,
+    marginBottom: 16,
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  selectedMode: {
+    borderColor: '#3B82F6',
+    borderWidth: 2,
+  },
+  modeOptionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  modeOptionDescription: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  startButton: {
+    width: '80%',
   },
   emptyContainer: {
     flex: 1,
@@ -544,6 +737,36 @@ const styles = StyleSheet.create({
   },
   progressBar: {
     width: 80,
+  },
+  modeToggleContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    marginHorizontal: 24,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  modeToggle: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  activeMode: {
+    backgroundColor: '#EFF6FF',
+  },
+  modeToggleText: {
+    fontSize: 16,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  activeModeText: {
+    color: '#3B82F6',
   },
   errorBanner: {
     backgroundColor: '#FEF2F2',
@@ -656,6 +879,64 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.9)',
     marginBottom: 4,
     fontStyle: 'italic',
+  },
+  exerciseContainer: {
+    marginHorizontal: 24,
+    marginBottom: 24,
+  },
+  exerciseCard: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+  },
+  exerciseContent: {
+    padding: 32,
+    minHeight: 300,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  exerciseTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  exerciseDescription: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  exerciseMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 32,
+  },
+  exerciseType: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '600',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  exerciseTime: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '600',
+  },
+  startExerciseButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
   },
   ratingContainer: {
     marginHorizontal: 24,

@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Progress, Button, Input } from '@/components/ui';
 import { apiClient, learningApi } from '@/lib/api';
 import { AddWordForm } from './AddWordForm';
+import { VocabularyAchievements } from '@/components/vocabulary/VocabularyAchievements';
 
 interface VocabularyCard {
   id: string;
@@ -60,6 +61,11 @@ export const ManageSection = () => {
     topicId: "",
     setId: "",
     difficulty: "",
+    partOfSpeech: "",
+    frequencyMin: "",
+    frequencyMax: "",
+    dateFrom: "",
+    dateTo: "",
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -67,6 +73,10 @@ export const ManageSection = () => {
   const [showSetFilter, setShowSetFilter] = useState(false);
   const [showTopicFilter, setShowTopicFilter] = useState(false);
   const [showDifficultyFilter, setShowDifficultyFilter] = useState(false);
+  const [showPartOfSpeechFilter, setShowPartOfSpeechFilter] = useState(false);
+  const [showFrequencyFilter, setShowFrequencyFilter] = useState(false);
+  const [showDateFilter, setShowDateFilter] = useState(false);
+  const [activeTab, setActiveTab] = useState('vocabulary'); // 'vocabulary' or 'achievements'
 
   const fetchVocabularyCards = async () => {
     try {
@@ -81,6 +91,11 @@ export const ManageSection = () => {
       if (filters.topicId) params.topicId = filters.topicId;
       if (filters.setId) params.setId = filters.setId;
       if (filters.difficulty) params.difficulty = filters.difficulty;
+      if (filters.partOfSpeech) params.partOfSpeech = filters.partOfSpeech;
+      if (filters.frequencyMin) params.frequencyMin = filters.frequencyMin;
+      if (filters.frequencyMax) params.frequencyMax = filters.frequencyMax;
+      if (filters.dateFrom) params.dateFrom = filters.dateFrom;
+      if (filters.dateTo) params.dateTo = filters.dateTo;
 
       const response = await learningApi.getVocabularyCards(params);
       if (response.success && response.data) {
@@ -131,7 +146,17 @@ export const ManageSection = () => {
   };
 
   const resetFilters = () => {
-    setFilters({ language: "", topicId: "", setId: "", difficulty: "" });
+    setFilters({ 
+      language: "", 
+      topicId: "", 
+      setId: "", 
+      difficulty: "",
+      partOfSpeech: "",
+      frequencyMin: "",
+      frequencyMax: "",
+      dateFrom: "",
+      dateTo: "",
+    });
     setSearchQuery("");
     setCurrentPage(1);
   };
@@ -262,15 +287,155 @@ export const ManageSection = () => {
     </View>
   );
 
+  const renderPartOfSpeechFilter = () => (
+    <View style={styles.filterDropdown}>
+      <TouchableOpacity 
+        style={styles.filterOption}
+        onPress={() => {
+          handleFilterChange('partOfSpeech', '');
+          setShowPartOfSpeechFilter(false);
+        }}
+      >
+        <Text style={[styles.filterOptionText, !filters.partOfSpeech && styles.filterOptionTextSelected]}>
+          All Types
+        </Text>
+      </TouchableOpacity>
+      {['noun', 'verb', 'adjective', 'adverb', 'pronoun', 'preposition', 'conjunction', 'interjection'].map((pos) => (
+        <TouchableOpacity 
+          key={pos}
+          style={styles.filterOption}
+          onPress={() => {
+            handleFilterChange('partOfSpeech', pos);
+            setShowPartOfSpeechFilter(false);
+          }}
+        >
+          <Text style={[styles.filterOptionText, filters.partOfSpeech === pos && styles.filterOptionTextSelected]}>
+            {pos.charAt(0).toUpperCase() + pos.slice(1)}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  const renderFrequencyFilter = () => (
+    <View style={styles.filterDropdown}>
+      <View style={styles.filterOption}>
+        <Text style={styles.filterOptionText}>Min Frequency:</Text>
+        <TextInput
+          style={styles.frequencyInput}
+          value={filters.frequencyMin}
+          onChangeText={(value) => setFilters(prev => ({ ...prev, frequencyMin: value }))}
+          keyboardType="numeric"
+          placeholder="0"
+        />
+      </View>
+      <View style={styles.filterOption}>
+        <Text style={styles.filterOptionText}>Max Frequency:</Text>
+        <TextInput
+          style={styles.frequencyInput}
+          value={filters.frequencyMax}
+          onChangeText={(value) => setFilters(prev => ({ ...prev, frequencyMax: value }))}
+          keyboardType="numeric"
+          placeholder="100"
+        />
+      </View>
+      <View style={styles.filterActions}>
+        <TouchableOpacity 
+          style={styles.filterActionButton}
+          onPress={() => {
+            handleFilterChange('frequencyMin', filters.frequencyMin);
+            handleFilterChange('frequencyMax', filters.frequencyMax);
+            setShowFrequencyFilter(false);
+          }}
+        >
+          <Text style={styles.filterActionText}>Apply</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.filterActionButton}
+          onPress={() => {
+            setFilters(prev => ({ ...prev, frequencyMin: '', frequencyMax: '' }));
+            handleFilterChange('frequencyMin', '');
+            handleFilterChange('frequencyMax', '');
+            setShowFrequencyFilter(false);
+          }}
+        >
+          <Text style={styles.filterActionText}>Clear</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderDateFilter = () => (
+    <View style={styles.filterDropdown}>
+      <View style={styles.filterOption}>
+        <Text style={styles.filterOptionText}>From Date:</Text>
+        <TextInput
+          style={styles.frequencyInput}
+          value={filters.dateFrom}
+          onChangeText={(value) => setFilters(prev => ({ ...prev, dateFrom: value }))}
+          placeholder="YYYY-MM-DD"
+        />
+      </View>
+      <View style={styles.filterOption}>
+        <Text style={styles.filterOptionText}>To Date:</Text>
+        <TextInput
+          style={styles.frequencyInput}
+          value={filters.dateTo}
+          onChangeText={(value) => setFilters(prev => ({ ...prev, dateTo: value }))}
+          placeholder="YYYY-MM-DD"
+        />
+      </View>
+      <View style={styles.filterActions}>
+        <TouchableOpacity 
+          style={styles.filterActionButton}
+          onPress={() => {
+            handleFilterChange('dateFrom', filters.dateFrom);
+            handleFilterChange('dateTo', filters.dateTo);
+            setShowDateFilter(false);
+          }}
+        >
+          <Text style={styles.filterActionText}>Apply</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.filterActionButton}
+          onPress={() => {
+            setFilters(prev => ({ ...prev, dateFrom: '', dateTo: '' }));
+            handleFilterChange('dateFrom', '');
+            handleFilterChange('dateTo', '');
+            setShowDateFilter(false);
+          }}
+        >
+          <Text style={styles.filterActionText}>Clear</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <AddWordForm onWordAdded={fetchVocabularyCards} />
       
-      {/* Header */}
+      {/* Header with Tabs */}
       <View style={styles.managementHeader}>
         <Text style={styles.managementTitle}>Vocabulary Management</Text>
+        <View style={styles.tabContainer}>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'vocabulary' && styles.activeTab]}
+            onPress={() => setActiveTab('vocabulary')}
+          >
+            <Text style={[styles.tabText, activeTab === 'vocabulary' && styles.activeTabText]}>Vocabulary</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'achievements' && styles.activeTab]}
+            onPress={() => setActiveTab('achievements')}
+          >
+            <Text style={[styles.tabText, activeTab === 'achievements' && styles.activeTabText]}>Achievements</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={styles.managementSubtitle}>
-          Browse, search, and organize your vocabulary cards
+          {activeTab === 'vocabulary' 
+            ? 'Browse, search, and organize your vocabulary cards' 
+            : 'Track your vocabulary learning achievements'}
         </Text>
       </View>
       
@@ -338,11 +503,65 @@ export const ManageSection = () => {
                 setShowLanguageFilter(false);
                 setShowSetFilter(false);
                 setShowTopicFilter(false);
+                setShowPartOfSpeechFilter(false);
+                setShowFrequencyFilter(false);
+                setShowDateFilter(false);
               }}
             >
               <Ionicons name="bar-chart" size={20} color="#3B82F6" />
               <Text style={styles.filterButtonText}>Difficulty</Text>
               {filters.difficulty ? <View style={styles.filterBadge} /> : null}
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.filterButton}
+              onPress={() => {
+                setShowPartOfSpeechFilter(!showPartOfSpeechFilter);
+                setShowLanguageFilter(false);
+                setShowSetFilter(false);
+                setShowTopicFilter(false);
+                setShowDifficultyFilter(false);
+                setShowFrequencyFilter(false);
+                setShowDateFilter(false);
+              }}
+            >
+              <Ionicons name="bookmarks" size={20} color="#3B82F6" />
+              <Text style={styles.filterButtonText}>Type</Text>
+              {filters.partOfSpeech ? <View style={styles.filterBadge} /> : null}
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.filterButton}
+              onPress={() => {
+                setShowFrequencyFilter(!showFrequencyFilter);
+                setShowLanguageFilter(false);
+                setShowSetFilter(false);
+                setShowTopicFilter(false);
+                setShowDifficultyFilter(false);
+                setShowPartOfSpeechFilter(false);
+                setShowDateFilter(false);
+              }}
+            >
+              <Ionicons name="stats-chart" size={20} color="#3B82F6" />
+              <Text style={styles.filterButtonText}>Frequency</Text>
+              {(filters.frequencyMin || filters.frequencyMax) ? <View style={styles.filterBadge} /> : null}
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.filterButton}
+              onPress={() => {
+                setShowDateFilter(!showDateFilter);
+                setShowLanguageFilter(false);
+                setShowSetFilter(false);
+                setShowTopicFilter(false);
+                setShowDifficultyFilter(false);
+                setShowPartOfSpeechFilter(false);
+                setShowFrequencyFilter(false);
+              }}
+            >
+              <Ionicons name="calendar" size={20} color="#3B82F6" />
+              <Text style={styles.filterButtonText}>Date</Text>
+              {(filters.dateFrom || filters.dateTo) ? <View style={styles.filterBadge} /> : null}
             </TouchableOpacity>
             <TouchableOpacity style={styles.clearButton} onPress={resetFilters}>
                 <Text style={styles.clearButtonText}>Clear Filters</Text>
@@ -356,6 +575,9 @@ export const ManageSection = () => {
         {showSetFilter && renderSetFilter()}
         {showTopicFilter && renderTopicFilter()}
         {showDifficultyFilter && renderDifficultyFilter()}
+        {showPartOfSpeechFilter && renderPartOfSpeechFilter()}
+        {showFrequencyFilter && renderFrequencyFilter()}
+        {showDateFilter && renderDateFilter()}
       </View>
       
       {/* Vocabulary Cards Grid */}
@@ -462,6 +684,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#64748B',
   },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  activeTab: {
+    backgroundColor: '#EFF6FF',
+  },
+  tabText: {
+    fontSize: 16,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  activeTabText: {
+    color: '#3B82F6',
+  },
   searchContainer: {
     marginHorizontal: 24,
     marginBottom: 16,
@@ -550,6 +801,33 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#3B82F6',
     marginLeft: 4,
+  },
+  frequencyInput: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 6,
+    padding: 8,
+    marginTop: 4,
+    fontSize: 14,
+    color: '#1E293B',
+  },
+  filterActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  filterActionButton: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  filterActionText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   loadingContainer: {
     flex: 1,
